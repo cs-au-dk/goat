@@ -1,0 +1,44 @@
+# From https://github.com/github/gitignore/blob/master/Go.gitignore
+# Binaries for programs and plugins
+/Goat
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/.vscode
+
+# Test binary, built with `go test -c`
+*.test
+__debug_bin
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+####
+
+*_gen.go
+
+/reasoning/*.pdf
+/reasoning/*.synctex.gz
+/reasoning/*.log
+/reasoning/*.fls
+/reasoning/*.fdb_latexmk
+/reasoning/*.aux
+/reasoning/*.html
+/external
+vendor
+Visualization
+
+/examples/src/ignore
+
+/reasoning/metrics/*
+!/reasoning/metrics/stub
+
+/reasoning/metrics_result.csv
+/reasoning/metrics_errors
+
+/benchmarks/*/**/*.txt
+/benchmarks/pdfs
+
+__pycache__
