@@ -1007,11 +1007,11 @@ func (n *FunctionEntry) Pos() token.Pos {
 }
 
 func (n *FunctionExit) Pos() token.Pos {
-	return n.fun.Pos()
+	return n.fun.Syntax().End()
 }
 
 func (n *TerminateGoro) Pos() token.Pos {
-	return n.fun.Pos()
+	return n.fun.Syntax().End()
 }
 
 func (n *SelectRcv) Pos() token.Pos {
