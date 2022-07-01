@@ -26,6 +26,7 @@ type unroll struct {
 	// - Side effects on the index in the body of the loop
 	// - "goto" statements
 	// - "break" and "continue" statements at the level of loop's scope
+	// - Calls to non-builtin named functions. No call sensitivty leads to too many inter-procedural edges
 	safe bool
 }
 
@@ -160,7 +161,7 @@ func newSafetyVisitor(u *unroll) *safetyVisitor {
 	return &safetyVisitor{true, true, u}
 }
 
-func (u *unroll) isBodyUnrollable(s *ast.BlockStmt) bool {
+func (u *unroll) isUnrollableBody(s *ast.BlockStmt) bool {
 	ast.Walk(newSafetyVisitor(u), s)
 	return u.safe
 }
@@ -209,6 +210,29 @@ func (s *safetyVisitor) Visit(n ast.Node) ast.Visitor {
 			if x.Obj == u.i {
 				return abort()
 			}
+		}
+	case *ast.CallExpr:
+		switch f := n.Fun.(type) {
+		case *ast.FuncLit:
+		case *ast.Ident:
+			switch f.Name {
+			// Builtins are ok
+			case "panic":
+			case "recover":
+			case "new":
+			case "make":
+			case "len":
+			case "cap":
+			case "println":
+			case "delete":
+			case "copy":
+			case "close":
+			case "append":
+			default:
+				return abort()
+			}
+		default:
+			return abort()
 		}
 	case *ast.UnaryExpr:
 		// If the unary expression is &i, pessimistically assume it is unsafe and abort
@@ -353,7 +377,7 @@ func Transform(c *astutil.Cursor) bool {
 			return true
 		}
 
-		if !u.isBodyUnrollable(s.Body) {
+		if !u.isUnrollableBody(s.Body) {
 			return true
 		}
 
@@ -369,9 +393,9 @@ func Transform(c *astutil.Cursor) bool {
 			}
 
 			block := &ast.BlockStmt{
-				s.For,
-				stmts,
-				s.Body.Rbrace,
+				Lbrace: s.For,
+				List:   stmts,
+				Rbrace: s.Body.Rbrace,
 			}
 
 			c.Replace(block)
