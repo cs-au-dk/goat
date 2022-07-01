@@ -375,6 +375,7 @@ func (optInterface) AnalyzeAllFuncs() bool {
 
 func (optInterface) IsWholeProgramAnalysis() bool {
 	return (Opts().Task().IsAbstractInterpretation() ||
+		Opts().Task().IsCfgToDot() ||
 		Opts().Task().IsCollectPrimitives()) &&
 		opts.function == "main"
 }
