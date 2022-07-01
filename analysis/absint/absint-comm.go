@@ -8,6 +8,7 @@ import (
 	loc "Goat/analysis/location"
 	T "Goat/analysis/transition"
 	"Goat/utils/set"
+	"fmt"
 	"go/types"
 	"log"
 
@@ -15,9 +16,13 @@ import (
 )
 
 func (s *AbsConfiguration) GetCommSuccessors(
+	C AnalysisCtxt,
 	leaves map[defs.Goro]map[defs.CtrLoc]struct{},
 	state L.AnalysisState,
 ) (S transfers) {
+	tIn := func(s *AbsConfiguration, g defs.Goro) Successor {
+		return Successor{s, T.In{Progressed: g}}
+	}
 
 	mem := state.Memory()
 	S = make(transfers)
@@ -32,10 +37,8 @@ func (s *AbsConfiguration) GetCommSuccessors(
 		// operation (the latter should be followed by at least a "return" or "panic").
 		if len(c1.Successors()) > 0 {
 			//if !s.Threads()[tid1].Node.IsCommunicationNode() {
-			S.succUpdate(Successor{
-				s.Copy().DeriveThread(tid1, c1),
-				T.In{Progressed: tid1},
-			}, state)
+			tr := tIn(s.Copy().DeriveThread(tid1, c1), tid1)
+			S.succUpdate(tr, state)
 		}
 	}
 
@@ -78,8 +81,236 @@ func (s *AbsConfiguration) GetCommSuccessors(
 	}
 
 	for g1 := range leaves {
+		progress1 := func(succ defs.CtrLoc) *AbsConfiguration {
+			return s.Copy().DeriveThread(g1, succ)
+		}
+		tIn1 := func(succ defs.CtrLoc) Successor {
+			return tIn(progress1(succ), g1)
+		}
+
 		for c1 := range leaves[g1] {
+
+			// Filter the set of successors such that we only proceed to "charged" defer calls
+			filterDeferSuccessors := func() (ret []defs.CtrLoc) {
+				charged, _ := state.ThreadCharges().Get(g1)
+				for succ := range c1.Successors() {
+					ok := true
+					switch n := succ.Node().(type) {
+					case *cfg.DeferCall:
+						_, ok = charged.Get(succ)
+					case *cfg.BuiltinCall:
+						if n.IsDeferred() {
+							_, ok = charged.Get(succ)
+						}
+					}
+
+					if ok {
+						ret = append(ret, succ)
+					}
+				}
+				return
+			}
+
+			updatePhiNodes := func(fromBlock, toBlock *ssa.BasicBlock) L.Memory {
+				// Update phi nodes in toBlock with the values coming from fromBlock.
+				predIdx := -1
+				for i, pred := range toBlock.Preds {
+					if pred == fromBlock {
+						predIdx = i
+						break
+					}
+				}
+
+				if predIdx == -1 {
+					panic("???")
+				}
+
+				// From the documentation:
+				// Within a block, all φ-nodes must appear before all non-φ nodes.
+				newMem := mem
+				for _, instr := range toBlock.Instrs {
+					if phi, ok := instr.(*ssa.Phi); ok {
+						newMem = newMem.Update(
+							loc.LocationFromSSAValue(g1, phi),
+							evaluateSSA(g1, mem, phi.Edges[predIdx]),
+						)
+					} else {
+						break
+					}
+				}
+
+				return newMem
+			}
+
 			switch n1 := c1.Node().(type) {
+			case *cfg.Select:
+				// Select on irrelevant channels
+				for _, op := range n1.Ops() {
+					ncl := c1.Derive(op.Successor())
+					switch op := op.(type) {
+					case *cfg.SelectRcv:
+						newMem := mem
+						for _, val := range []ssa.Value{op.Val, op.Ok} {
+							if val != nil {
+								newMem = newMem.Update(
+									loc.LocationFromSSAValue(g1, val),
+									L.TopValueForType(val.Type()),
+								)
+							}
+						}
+
+						S.succUpdate(tIn1(ncl), state.UpdateMemory(newMem))
+					default:
+						S.succUpdate(tIn1(ncl), state.UpdateMemory(mem))
+					}
+				}
+
+			case *cfg.DeferCall:
+				C.callSuccs(g1, c1, state).ForEach(func(cl defs.CtrLoc, as L.AnalysisState) {
+					S.succUpdate(
+						tIn(progress1(cl), g1),
+						as)
+				})
+
+			case *cfg.PostDeferCall:
+				// For deferred calls we must filter the successors based on which defers are charged.
+				for _, succ := range filterDeferSuccessors() {
+
+					S.succUpdate(tIn(progress1(succ), g1), state)
+				}
+			case *cfg.FunctionEntry:
+				S.succUpdate(tIn(progress1(c1.Successor()), g1), state)
+			case *cfg.FunctionExit:
+				anyFound := false
+				// Only propagate control to charged successors.
+				charged, _ := state.ThreadCharges().Get(g1)
+				//callDAG := C.LoadRes.CallDAG
+				retState := state
+
+				/* TODO
+					 Abstract GC is disabled because `canGC` is expensive and because
+					 it's hard to judge whether the reduced memory size outweighs the
+					 benefit of not modifying the memory tree structure.
+				if canGC(g, n) {
+					retState = initState.UpdateMemory(abstractGC(g, n.Function(), initMem))
+				}
+				*/
+
+				// NOTE: We cannot use GetUnsafe because goroutines spawned on builtins
+				// get wired up as `builtin -> functionexit` (to trigger goroutine termination).
+				// We instead assert that a return value exists when we actually need it.
+				returnVal, hasReturnVal := mem.Get(loc.ReturnLocation(g1, n1.Function()))
+
+				for succ := range c1.Successors() {
+					// Workaround for letting init function-exit progress to main function-entry
+					if sNode, isEntry := succ.Node().(*cfg.FunctionEntry); isEntry &&
+						n1.Function().Name() == "init" && sNode.Function().Name() == "main" {
+						anyFound = true
+						S.succUpdate(tIn1(succ), retState)
+					} else {
+						for _, succExiting := range [...]bool{false, true} {
+							// Check if a charged successor exists with either value of the exiting flag
+							succ := succ.WithExiting(succExiting)
+							if _, found := charged.Get(succ); found {
+								anyFound = true
+								updatedRetState := retState
+
+								// If the call instruction is a normal call (not defer), we need
+								// to propagate the return value.
+								if ssaNode, ok := succ.Node().CallRelationNode().(*cfg.SSANode); ok {
+									if !hasReturnVal {
+										panic(fmt.Errorf("missing return value when returning from %v", n1))
+									}
+
+									value := ssaNode.Instruction().(*ssa.Call)
+									updatedRetState = updatedRetState.UpdateMemory(
+										updatedRetState.Memory().Update(loc.LocationFromSSAValue(g1, value), returnVal),
+									)
+								}
+
+								// We can remove the charged post-call node from the state if we know that the
+								// function we are returning from (exiting out of) is guaranteed to not be
+								// on the call stack after returning.
+								// This does not remove butterfly cycles or otherwise improve precision inside
+								// a single intraprocessual fixpoint computation, as we will end up joining
+								// the sets of charged post-call nodes at function entry if a function is
+								// called multiple times. However, if two calls to the same function are separated
+								// by a communication operation in a synchronizing configuration, we will have
+								// thrown away the state at function entry between the two fixpoint computations,
+								// preventing the join of sets of charged post-call nodes.
+								// If the two functions are in different components in the SCC convolution of the
+								// call graph, the exited function cannot be on the call stack after return.
+								// NOTE: This should probably be done a non-pruned (sounder) call graph.
+								/* TODO: Disabled because the below safety check starting getting triggered in
+										some cases. Try for instance GoKer/grpc/862. I am not sure why it happens
+									and we do not have time to investigate it and fix it.
+									I suspect there may be a problem with charging single nodes instead of
+									charging return edges (from function exit to post-call), since this allows
+									a function to return to a post-call node that never called it.
+								if callDAG.ComponentOf(n.Function()) != callDAG.ComponentOf(succ.Node().Function()) {
+									updatedRetState = updatedRetState.UpdateThreadCharges(
+										updatedRetState.ThreadCharges().Update(g, charged.Remove(succ)),
+									)
+								}
+								*/
+
+								// If the exiting flag is true at FunctionExit, we should propagate
+								// it no matter the value of the flag in the charged CtrLoc.
+								if !succExiting && c1.Exiting() {
+									succ = succ.WithExiting(true)
+								}
+
+								S.succUpdate(tIn1(succ), updatedRetState)
+							}
+						}
+					}
+				}
+
+				if n1.Function() == c1.Root() {
+					// If the function exit node belongs to the root function
+					// of the goroutine, it indicates a potential goroutine exit point.
+					S.succUpdate(tIn1(c1.Derive(
+						cfg.AddSynthetic(cfg.SynthConfig{
+							Type:             cfg.SynthTypes.TERMINATE_GORO,
+							Function:         n1.Function(),
+							TerminationCause: cfg.GoroTermination.EXIT_ROOT,
+						}))), state)
+				}
+
+				// Safety check
+				if !anyFound && c1.Node().Function() != c1.Root() && !c1.Panicked() {
+					log.Println("Did not find any charged sites to return to?", c1)
+				}
+			case *cfg.SSANode:
+				switch insn := n1.Instruction().(type) {
+				case *ssa.Call:
+					C.callSuccs(g1, c1, state).ForEach(func(cl defs.CtrLoc, as L.AnalysisState) {
+						S.succUpdate(tIn1(cl), as)
+					})
+				case *ssa.If:
+					condV := evaluateSSA(g1, mem, insn.Cond).BasicValue()
+
+					bl := insn.Block()
+					// Hacking our way around...
+				SUCCESSOR:
+					for succ := range c1.Successors() {
+						// Due to compression the first instruction of the successor block may not exist in the CFG.
+						// We try to match the block indices instead of exact CFG nodes.
+						for i, blk := range insn.Block().Succs {
+							if blk == succ.Node().Block() {
+								// The first successor block is used when the test is true,
+								// the second is used when the test is false.
+								if condV.Geq(Elements().Constant(i == 0)) {
+									S.succUpdate(tIn1(succ), state.UpdateMemory(updatePhiNodes(bl, blk)))
+								}
+								continue SUCCESSOR
+							}
+						}
+
+						log.Fatalln("Unable to match", succ, "with an if successor block")
+					}
+				}
+
 			// A Cond value wakes some goroutine
 			case *cfg.CondWaking:
 				mops := L.MemOps(mem)
@@ -95,9 +326,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 				// the goroutine may wake without blocking
 				if !condVal.Cond().IsLockerKnown() {
 					updMem(Successor{
-						s.Copy().DeriveThread(
-							g1,
-							c1.Derive(n1.Predecessor().Successor())),
+						progress1(c1.Derive(n1.Predecessor().Successor())),
 						T.Wake{Progressed: g1, Cond: n1.Cnd},
 					}, mops.Memory())
 					continue
@@ -136,9 +365,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 					mops.Update(n1.Cnd, condVal.UpdateCond(freshCond))
 
 					updMem(Successor{
-						s.Copy().DeriveThread(
-							g1,
-							c1.Derive(n1.Predecessor().Successor())),
+						progress1(c1.Derive(n1.Predecessor().Successor())),
 						T.Wake{Progressed: g1, Cond: n1.Cnd},
 					}, mops.Memory())
 				}
@@ -161,7 +388,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 				if !condVal.Cond().IsLockerKnown() {
 					updMem(Successor{
 						// Should step into a Waiting node
-						s.Copy().DeriveThread(g1, c1.Predecessor().Successor()),
+						progress1(c1.Predecessor().Successor()),
 						T.Wait{Progressed: g1, Cond: n1.Cnd},
 					}, mops.Memory())
 					continue
@@ -215,17 +442,14 @@ func (s *AbsConfiguration) GetCommSuccessors(
 
 					updMem(Successor{
 						// Should step into a Waiting node
-						s.Copy().DeriveThread(g1, c1.Predecessor().Successor()),
+						progress1(c1.Predecessor().Successor()),
 						T.Wait{Progressed: g1, Cond: n1.Cnd},
 					}, mops.Memory())
 				}
 				if freshFailCond.Cond().HasLockers() {
-					updMem(Successor{
-						// Should step into the panic continuation (tried to unlock unlocked
-						// mutex)
-						s.Copy().DeriveThread(g1, c1.Predecessor().Panic()),
-						T.In{Progressed: g1},
-					}, mem)
+					// Should step into the panic continuation (tried to unlock unlocked
+					// mutex)
+					updMem(tIn1(c1.Predecessor().Panic()), mem)
 				}
 			case *cfg.CondSignal:
 				// Refines the .Signal() Cond receiver.
@@ -251,10 +475,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 
 								newMem := attemptValueRefine(g2, refinedMem, n2.Cond(), Elements().AbstractPointerV(n2.Cnd))
 
-								succConf := s.Copy().DeriveThread(
-									// Step over .Signal() call
-									g1, c1.Predecessor().CallRelationNode(),
-								).DeriveThread(
+								succConf := progress1(c1.Predecessor().CallRelationNode()).DeriveThread(
 									// Step into .Wait() post call node
 									g2, c2.Predecessor().Successor(),
 								)
@@ -277,10 +498,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 				// behavior must take this into account, but could lead to many false positives.
 				if !definiteWake {
 					updMem(Successor{
-						s.Copy().DeriveThread(
-							// Step over .Signal() call
-							g1, c1.Predecessor().CallRelationNode(),
-						),
+						progress1(c1.Predecessor().CallRelationNode()),
 						T.Signal{
 							Progressed1: g1,
 							Cond:        n1.Cnd,
@@ -321,7 +539,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 				}
 
 				getSuccessor := func(candidates []GoroCand) {
-					sl := s.Copy().DeriveThread(g1, c1.Predecessor().CallRelationNode())
+					sl := progress1(c1.Predecessor().CallRelationNode())
 					t := T.Broadcast{
 						Broadcaster:  g1,
 						Cond:         n1.Cnd,
@@ -437,7 +655,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 						// results will be joined at the same superlocation.
 						refinedMem := attemptValueRefine(g1, mem, opReg1, Elements().AbstractPointerV(n1.Loc))
 						updMem(Successor{
-							s.Copy().DeriveThread(g1, cl),
+							progress1(cl),
 							T.Send{Progressed: g1, Chan: n1.Loc},
 						}, refinedMem.Update(
 							// Update channel value in memory
@@ -528,9 +746,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 										// SAFE: Only one predecessor per communication leaf
 										// Only one successor for communication operation
 										// based on the SSA IR
-										s.Copy().DeriveThread(
-											g1, c1.Predecessor().Successor(),
-										).DeriveThread(
+										progress1(c1.Predecessor().Successor()).DeriveThread(
 											g2, c2.Predecessor().Successor()),
 										T.Sync{
 											Channel:     n1.Loc,
@@ -602,7 +818,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 						newMem = attemptValueRefine(g1, newMem, opReg, Elements().AbstractPointerV(n1.Loc))
 
 						updMem(Successor{
-							s.Copy().DeriveThread(g1, c1.Predecessor().Successor()),
+							progress1(c1.Predecessor().Successor()),
 							T.Receive{Progressed: g1, Chan: n1.Loc},
 						}, newMem.Update(
 							// Update channel value in memory
@@ -641,10 +857,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 							if chLoc, ok := chLoc.(loc.AddressableLocation); ok {
 								newMem = newMem.Update(chLoc, val)
 							}
-							updMem(Successor{
-								s.Copy().DeriveThread(g1, cl),
-								T.Close{Progressed: g1, Op: n1.Arg(0)},
-							},
+							updMem(Successor{progress1(cl), T.Close{Progressed: g1, Op: n1.Arg(0)}},
 								// The channel may be part of the operand's points-to set.
 								attemptValueRefine(g1, newMem, opReg, Elements().AbstractPointerV(chLoc)),
 							)
@@ -668,10 +881,11 @@ func (s *AbsConfiguration) GetCommSuccessors(
 					)
 				}
 			case *cfg.TerminateGoro:
-				S.succUpdate(Successor{
-					s.Copy().DeriveThread(g1, c1),
-					T.In{Progressed: g1},
-				}, state)
+				S.succUpdate(tIn1(c1), state)
+			case *cfg.SelectDefault:
+				for _, succ := range filterDeferSuccessors() {
+					simpleLeaf(g1, succ)
+				}
 			default:
 				simpleLeaf(g1, c1)
 			}

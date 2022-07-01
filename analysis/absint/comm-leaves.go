@@ -178,23 +178,32 @@ func (C AnalysisCtxt) computeCommunicationLeaves(g defs.Goro, mem L.Memory, cl d
 
 	getCallSuccs := func(i ssa.CallInstruction) (res map[defs.CtrLoc]bool, mem L.Memory) {
 		if sc := i.Common().StaticCallee(); sc != nil {
-			rcvr := i.Common().Args[0]
-			switch {
-			case utils.IsNamedType(rcvr.Type(), "sync", "Mutex") ||
-				utils.IsNamedType(rcvr.Type(), "sync", "RWMutex"):
-				return getMuOpSuccs(rcvr, i, sc.Name())
-			case utils.IsNamedType(rcvr.Type(), "sync", "Cond"):
-				return getCondSuccs(i, sc.Name())
+			if len(i.Common().Args) > 0 {
+				rcvr := i.Common().Args[0]
+				switch {
+				case utils.IsNamedType(rcvr.Type(), "sync", "Mutex") ||
+					utils.IsNamedType(rcvr.Type(), "sync", "RWMutex"):
+					return getMuOpSuccs(rcvr, i, sc.Name())
+				case utils.IsNamedType(rcvr.Type(), "sync", "Cond"):
+					return getCondSuccs(i, sc.Name())
+				}
 			}
 		} else {
-			return getMuOpSuccs(i.Common().Value, i, i.Common().Method.Name())
+			if method := i.Common().Method; method != nil &&
+				(method.Name() == "Lock" || method.Name() == "Unlock") {
+				return getMuOpSuccs(i.Common().Value, i, method.Name())
+			}
 		}
-		return
+		return map[defs.CtrLoc]bool{cl: true}, mops.Memory()
 	}
 
 	C.Metrics.AddCommOp(cl)
 
 	switch n := cl.Node().(type) {
+	case *cfg.FunctionEntry:
+		return map[defs.CtrLoc]bool{cl: true}, mops.Memory()
+	case *cfg.FunctionExit:
+		return map[defs.CtrLoc]bool{cl: true}, mops.Memory()
 	case *cfg.TerminateGoro:
 		newMem = mops.Memory()
 		return
@@ -245,6 +254,8 @@ func (C AnalysisCtxt) computeCommunicationLeaves(g defs.Goro, mem L.Memory, cl d
 		}
 	case *cfg.SSANode:
 		switch i := n.Instruction().(type) {
+		case *ssa.If:
+			return map[defs.CtrLoc]bool{cl: true}, mops.Memory()
 		case *ssa.Defer:
 			// SSA defer calls should not be a communication node.
 			// Them being found indicates a bug.
@@ -266,12 +277,14 @@ func (C AnalysisCtxt) computeCommunicationLeaves(g defs.Goro, mem L.Memory, cl d
 		if res != nil {
 			return
 		}
+	case *cfg.Select:
+		return map[defs.CtrLoc]bool{cl: true}, mops.Memory()
 	case *cfg.SelectRcv:
 		return getCommSuccs(n.Channel(), cfg.SynthTypes.COMM_RCV)
 	case *cfg.SelectSend:
 		return getCommSuccs(n.Channel(), cfg.SynthTypes.COMM_SEND)
 	case *cfg.SelectDefault:
-		return cl.DeriveBatch(n.Successors()), mops.Memory()
+		return map[defs.CtrLoc]bool{cl: true}, mops.Memory()
 	case *cfg.BuiltinCall:
 		if n.Builtin().Name() == "close" {
 			// Make sure wildcards get swapped:

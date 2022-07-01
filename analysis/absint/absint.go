@@ -434,98 +434,6 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 
 	C.LogCtrLocMemory(g, cl, initMem)
 	switch n := cl.Node().(type) {
-	case *cfg.FunctionEntry:
-		succs = succs.Update(cl.Successor(), initState)
-	case *cfg.FunctionExit:
-		anyFound := false
-		// Only propagate control to charged successors.
-		charged, _ := initState.ThreadCharges().Get(g)
-		//callDAG := C.LoadRes.CallDAG
-		retState := initState
-
-		/* TODO
-		   Abstract GC is disabled because `canGC` is expensive and because
-		   it's hard to judge whether the reduced memory size outweighs the
-		   benefit of not modifying the memory tree structure.
-		if canGC(g, n) {
-			retState = initState.UpdateMemory(abstractGC(g, n.Function(), initMem))
-		}
-		*/
-
-		// NOTE: We cannot use GetUnsafe because goroutines spawned on builtins
-		// get wired up as `builtin -> functionexit` (to trigger goroutine termination).
-		// We instead assert that a return value exists when we actually need it.
-		returnVal, hasReturnVal := initMem.Get(loc.ReturnLocation(g, n.Function()))
-
-		for succ := range cl.Successors() {
-			// Workaround for letting init function-exit progress to main function-entry
-			if sNode, isEntry := succ.Node().(*cfg.FunctionEntry); isEntry &&
-				n.Function().Name() == "init" && sNode.Function().Name() == "main" {
-				anyFound = true
-				succs = succs.Update(succ, retState)
-			} else {
-				for _, succExiting := range [...]bool{false, true} {
-					// Check if a charged successor exists with either value of the exiting flag
-					succ := succ.WithExiting(succExiting)
-					if _, found := charged.Get(succ); found {
-						anyFound = true
-						updatedRetState := retState
-
-						// If the call instruction is a normal call (not defer), we need
-						// to propagate the return value.
-						if ssaNode, ok := succ.Node().CallRelationNode().(*cfg.SSANode); ok {
-							if !hasReturnVal {
-								panic(fmt.Errorf("missing return value when returning from %v", n))
-							}
-
-							value := ssaNode.Instruction().(*ssa.Call)
-							updatedRetState = updatedRetState.UpdateMemory(
-								updatedRetState.Memory().Update(loc.LocationFromSSAValue(g, value), returnVal),
-							)
-						}
-
-						// We can remove the charged post-call node from the state if we know that the
-						// function we are returning from (exiting out of) is guaranteed to not be
-						// on the call stack after returning.
-						// This does not remove butterfly cycles or otherwise improve precision inside
-						// a single intraprocessual fixpoint computation, as we will end up joining
-						// the sets of charged post-call nodes at function entry if a function is
-						// called multiple times. However, if two calls to the same function are separated
-						// by a communication operation in a synchronizing configuration, we will have
-						// thrown away the state at function entry between the two fixpoint computations,
-						// preventing the join of sets of charged post-call nodes.
-						// If the two functions are in different components in the SCC convolution of the
-						// call graph, the exited function cannot be on the call stack after return.
-						// NOTE: This should probably be done a non-pruned (sounder) call graph.
-						/* TODO: Disabled because the below safety check starting getting triggered in
-						    some cases. Try for instance GoKer/grpc/862. I am not sure why it happens
-							and we do not have time to investigate it and fix it.
-							I suspect there may be a problem with charging single nodes instead of
-							charging return edges (from function exit to post-call), since this allows
-							a function to return to a post-call node that never called it.
-						if callDAG.ComponentOf(n.Function()) != callDAG.ComponentOf(succ.Node().Function()) {
-							updatedRetState = updatedRetState.UpdateThreadCharges(
-								updatedRetState.ThreadCharges().Update(g, charged.Remove(succ)),
-							)
-						}
-						*/
-
-						// If the exiting flag is true at FunctionExit, we should propagate
-						// it no matter the value of the flag in the charged CtrLoc.
-						if !succExiting && cl.Exiting() {
-							succ = succ.WithExiting(true)
-						}
-
-						succs = succs.WeakUpdate(succ, updatedRetState)
-					}
-				}
-			}
-		}
-
-		// Safety check
-		if !anyFound && cl.Node().Function() != cl.Root() && !cl.Panicked() {
-			log.Println("Did not find any charged sites to return to?", cl)
-		}
 
 	case *cfg.PostCall:
 		if cl.Exiting() {
@@ -657,15 +565,8 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 			succs = succs.Update(succ, initState)
 		}
 
-	case *cfg.SelectDefer:
-		for _, succ := range filterDeferSuccessors() {
-			succs = succs.Update(succ, initState)
-		}
-
 	case *cfg.SSANode:
 		switch insn := n.Instruction().(type) {
-		case *ssa.Call:
-			succs = C.callSuccs(g, cl, initState)
 
 		case *ssa.Defer:
 			newState := initState
@@ -1239,34 +1140,9 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 			// Spawning a goroutine can panic if the spawned function is an
 			// interface method and the receiver is nil.
 			succs = succs.Update(cl.Panic(), initState)
-
 		case *ssa.Jump:
 			bl := insn.Block()
 			singleUpd(updatePhiNodes(bl, bl.Succs[0]))
-
-		case *ssa.If:
-			condV := evaluateSSA(g, initMem, insn.Cond).BasicValue()
-
-			bl := insn.Block()
-			// Hacking our way around...
-		SUCCESSOR:
-			for succ := range cl.Successors() {
-				// Due to compression the first instruction of the successor block may not exist in the CFG.
-				// We try to match the block indices instead of exact CFG nodes.
-				for i, blk := range insn.Block().Succs {
-					if blk == succ.Node().Block() {
-						// The first successor block is used when the test is true,
-						// the second is used when the test is false.
-						if condV.Geq(Elements().Constant(i == 0)) {
-							succs = succs.Update(succ, initState.UpdateMemory(updatePhiNodes(bl, blk)))
-						}
-						continue SUCCESSOR
-					}
-				}
-
-				log.Fatalln("Unable to match", succ, "with an if successor block")
-			}
-
 		case *ssa.Panic:
 			// TODO: The value should maybe be passed on somehow?
 			succs = succs.Update(cl.Panic(), initState)
@@ -1277,28 +1153,6 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 
 		default:
 			panic(fmt.Sprintf("Don't know how to handle %T %v", insn, insn))
-		}
-
-	case *cfg.Select:
-		// Select on irrelevant channels
-		for _, op := range n.Ops() {
-			ncl := cl.Derive(op.Successor())
-			switch op := op.(type) {
-			case *cfg.SelectRcv:
-				mem := initMem
-				for _, val := range []ssa.Value{op.Val, op.Ok} {
-					if val != nil {
-						mem = mem.Update(
-							loc.LocationFromSSAValue(g, val),
-							L.TopValueForType(val.Type()),
-						)
-					}
-				}
-
-				succs = succs.Update(ncl, initState.UpdateMemory(mem))
-			default:
-				succs = succs.Update(ncl, initState)
-			}
 		}
 
 	default:

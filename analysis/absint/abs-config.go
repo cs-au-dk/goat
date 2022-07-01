@@ -139,6 +139,61 @@ func (s *AbsConfiguration) IsPanicked() bool {
 	return *s.panicked
 }
 
+func (C AnalysisCtxt) FocusedSelect(node *cfg.Select, g defs.Goro, mem L.Memory) bool {
+	for _, param := range cfg.CommunicationPrimitivesOf(node) {
+		av, _ := C.swapWildcard(g, mem, param)
+		for _, l := range av.PointerValue().FilterNil().Entries() {
+			// Dig out the allocation site location in case of field pointers
+			for {
+				switch lt := l.(type) {
+				case loc.GlobalLocation:
+				case loc.AllocationSiteLocation:
+				case loc.FieldLocation:
+					l = lt.Base
+					continue
+				default:
+					log.Fatalf("%v %T", lt, lt)
+					panic("???")
+				}
+
+				break
+			}
+
+			if site, ok := l.GetSite(); ok && C.IsPrimitiveFocused(site) {
+				return true
+			} else if !ok {
+				log.Fatalf("%v has no site?", l)
+			}
+		}
+	}
+
+	return false
+}
+
+func (s *AbsConfiguration) isAtRelevantSilentNode(
+	C AnalysisCtxt, mem L.Memory, g defs.Goro, cl defs.CtrLoc,
+) bool {
+	switch n := cl.Node().(type) {
+	case *cfg.Select:
+		return !C.FocusedSelect(n, g, mem)
+	case *cfg.FunctionEntry:
+		return true
+	case *cfg.FunctionExit:
+		return true
+	case *cfg.DeferCall:
+		return true
+	case *cfg.SSANode:
+		switch n.Instruction().(type) {
+		case *ssa.Call:
+			return true
+		case *ssa.If:
+			return true
+		}
+	}
+
+	return false
+}
+
 // Returns whether the control location is a communication operation
 // on a concurrency primitive that is focused (wrt. C).
 func (s *AbsConfiguration) isAtRelevantCommunicationNode(
@@ -146,6 +201,11 @@ func (s *AbsConfiguration) isAtRelevantCommunicationNode(
 	g defs.Goro, cl defs.CtrLoc,
 ) bool {
 	node := cl.Node()
+	if _, ok := node.(*cfg.Select); ok {
+	}
+	if s.isAtRelevantSilentNode(C, mem, g, cl) {
+		return true
+	}
 	if !node.IsCommunicationNode() {
 		return false
 	} else if _, isTerminated := node.(*cfg.TerminateGoro); isTerminated ||
@@ -210,6 +270,24 @@ func (s *AbsConfiguration) nextSilentProgress(C AnalysisCtxt, state L.AnalysisSt
 	return ret
 }
 
+func nextSilentLeaves(leaves map[defs.Goro]map[defs.CtrLoc]struct{}) (ret defs.Goro) {
+	for g := range leaves {
+		good := ret == nil || g.IsParentOf(ret)
+		if !good && !g.IsChildOf(ret) {
+			if g.WeakEqual(ret) {
+				good = g.Index() < ret.Index()
+			} else {
+				good = g.String() < ret.String()
+			}
+		}
+
+		if good {
+			ret = g
+		}
+	}
+	return ret
+}
+
 type getSuccResult = struct {
 	Successor
 	State L.AnalysisState
@@ -228,8 +306,12 @@ func (s *AbsConfiguration) GetTransitions(
 	// leaves contains the cfg nodes the different goroutines can end up at (without synchronizing).
 	leaves := make(map[defs.Goro]map[defs.CtrLoc]struct{})
 
+	needsSilentTransitions := false
 	// Update leaves when communicating
 	updateLeavesComm := func(v defs.CtrLoc, g defs.Goro) {
+		if _, ok := leaves[g]; !ok {
+			leaves[g] = make(map[defs.CtrLoc]struct{})
+		}
 		leaves[g][v] = struct{}{}
 	}
 
@@ -237,26 +319,38 @@ func (s *AbsConfiguration) GetTransitions(
 
 	// Populate the leaves maps
 	s.ForEach(func(g defs.Goro, cl defs.CtrLoc) {
-		leaves[g] = make(map[defs.CtrLoc]struct{})
+
+		iterateLeaves := func(ls map[defs.CtrLoc]bool) {
+			for w := range ls {
+				if s.isAtRelevantSilentNode(C, initState.Memory(), g, w) {
+					if !needsSilentTransitions {
+						leaves = make(map[defs.Goro]map[defs.CtrLoc]struct{})
+						needsSilentTransitions = true
+					}
+					updateLeavesComm(w, g)
+				} else if !needsSilentTransitions {
+					updateLeavesComm(w, g)
+				}
+			}
+		}
 
 		switch n := cl.Node().(type) {
 		case *cfg.Select:
-			for _, op := range n.Ops() {
-				ls, mem := C.computeCommunicationLeaves(g, mops.Memory(), cl.Derive(op))
-				if mem.Lattice() == nil {
-					fmt.Println(ls)
+			if C.FocusedSelect(n, g, initState.Memory()) {
+				for _, op := range n.Ops() {
+					ls, mem := C.computeCommunicationLeaves(g, mops.Memory(), cl.Derive(op))
+					mops = L.MemOps(mem)
+					iterateLeaves(ls)
 				}
+			} else {
+				ls, mem := C.computeCommunicationLeaves(g, mops.Memory(), cl)
 				mops = L.MemOps(mem)
-				for w := range ls {
-					updateLeavesComm(w, g)
-				}
+				iterateLeaves(ls)
 			}
 		default:
 			ls, mem := C.computeCommunicationLeaves(g, mops.Memory(), cl)
 			mops = L.MemOps(mem)
-			for w := range ls {
-				updateLeavesComm(w, g)
-			}
+			iterateLeaves(ls)
 		}
 	})
 
@@ -269,8 +363,17 @@ func (s *AbsConfiguration) GetTransitions(
 	if mops.Memory().Lattice() == nil {
 		log.Fatal("Memory is nil?", mops)
 	}
-	// Find communication partners and other transitions
-	return s.GetCommSuccessors(leaves, initState.UpdateMemory(mops.Memory()))
+
+	if needsSilentTransitions {
+		g := nextSilentLeaves(leaves)
+		return s.GetCommSuccessors(C,
+			map[defs.Goro]map[defs.CtrLoc]struct{}{
+				g: leaves[g],
+			}, initState)
+		// Find communication partners and other transitions
+	} else {
+		return s.GetCommSuccessors(C, leaves, initState.UpdateMemory(mops.Memory()))
+	}
 }
 
 // Returns possible multi-step silent successors for the given thread.
@@ -396,16 +499,17 @@ FIXPOINT:
 			transition:    T.In{Progressed: g},
 		}, state)
 	}
-
+	derive := func(succ defs.CtrLoc) *AbsConfiguration {
+		return s.Copy().DeriveThread(g, succ)
+	}
 	addTermination := func(cl defs.CtrLoc, state L.AnalysisState, cause int) {
 		addResult(
-			s.Copy().DeriveThread(g,
-				cl.Derive(
-					cfg.AddSynthetic(cfg.SynthConfig{
-						Type:             cfg.SynthTypes.TERMINATE_GORO,
-						Function:         cl.Node().Function(),
-						TerminationCause: cause,
-					}))),
+			derive(cl.Derive(
+				cfg.AddSynthetic(cfg.SynthConfig{
+					Type:             cfg.SynthTypes.TERMINATE_GORO,
+					Function:         cl.Node().Function(),
+					TerminationCause: cause,
+				}))),
 			state)
 	}
 
@@ -416,9 +520,7 @@ FIXPOINT:
 		case cl.Panicked():
 			fallthrough
 		case s.isAtRelevantCommunicationNode(C, state.Memory(), g, cl):
-			addResult(
-				s.Copy().DeriveThread(g, cl),
-				state)
+			addResult(derive(cl), state)
 		case len(n.Spawns()) > 0:
 			radix := g.Spawn(cl).GetRadix()
 			// The next available index for a goroutine spawn.
@@ -539,12 +641,6 @@ FIXPOINT:
 				addResult(
 					s.Copy().DeriveThread(g, cl.Successor()),
 					state.UpdateMemory(mem))
-			}
-		default:
-			if _, ok := n.(*cfg.FunctionExit); ok && n.Function() == cl.Root() {
-				// If the function exit node belongs to the root function
-				// of the goroutine, it indicates a potential goroutine exit point.
-				addTermination(cl, state, cfg.GoroTermination.EXIT_ROOT)
 			}
 		}
 	}

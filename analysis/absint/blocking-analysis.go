@@ -38,7 +38,7 @@ func (o Blocks) String() string {
 	return str
 }
 
-func (o Blocks) PrintPath(G SuperlocGraph, A L.Analysis, g graph.Graph[*ssa.Function]) {
+func (o Blocks) PrintPath(G SuperlocGraph, A L.Analysis) {
 	// Print shortest path to blocking configuration
 	for sl := range o {
 
@@ -105,37 +105,6 @@ func (o Blocks) PrintPath(G SuperlocGraph, A L.Analysis, g graph.Graph[*ssa.Func
 				case transition.Receive:
 					fmt.Println("|-- at", t.Chan.Position())
 					printCh(t.Chan)
-					fmt.Println("|")
-				case transition.In:
-					// Get the shortest callee path for internal transitions:
-					from := path[i].sl.GetUnsafe(t.Progressed).Node().Function()
-					to := path[i-1].sl.GetUnsafe(t.Progressed).Node().Function()
-
-					fpreds := map[*ssa.Function]*ssa.Function{}
-
-					g.BFS(from, func(f *ssa.Function) bool {
-						if f == to {
-							return true
-						}
-
-						for _, e := range g.Edges(f) {
-							if _, ok := fpreds[e]; !ok && e != from {
-								fpreds[e] = f
-							}
-						}
-
-						return false
-					})
-
-					path := []*ssa.Function{to}
-					for pred, ok := fpreds[to]; ok; pred, ok = fpreds[pred] {
-						path = append(path, pred)
-					}
-
-					for i := len(path) - 1; i >= 0; i-- {
-						fmt.Println("  |", path[i])
-						fmt.Println("   ", path[i].Prog.Fset.Position(path[i].Pos()))
-					}
 					fmt.Println("|")
 				}
 
