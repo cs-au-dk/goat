@@ -225,6 +225,16 @@ func (s0 *AbsConfiguration) Visualize() {
 	htoa := func(hash uint32) string {
 		return strconv.FormatUint(uint64(hash), 10)
 	}
+	gCounter := 0
+	gToColor := make(map[defs.Goro]string)
+	colors := []string{
+		"#E8FBE1",
+		"#ECE3FC",
+		"#FCEBF6",
+		"#FAF8DF",
+		"#DDF2FD",
+		"#DEE0E4",
+	}
 
 	G := &dot.DotGraph{
 		Options: map[string]string{
@@ -303,12 +313,17 @@ func (s0 *AbsConfiguration) Visualize() {
 			// 	continue
 			// }
 			g := gs[tid]
+			if _, ok := gToColor[g]; !ok {
+				gToColor[g] = colors[gCounter%len(colors)]
+				gCounter++
+			}
 			loc, _ := s.Threads().Get(g)
 			threadNode := &dot.DotNode{
 				ID: htoa(s.Hash()) + ":" + htoa(g.Hash()),
 				Attrs: dot.DotAttrs{
-					"label": loc.Node().Function().String() + "\n" + loc.String(),
-					"style": "filled",
+					"label":     loc.Node().Function().String() + "\n" + loc.String(),
+					"style":     "filled",
+					"fillcolor": gToColor[g],
 				},
 			}
 
