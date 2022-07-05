@@ -591,7 +591,7 @@ func main() {
 						blocks.Log()
 
 						if opts.Visualize() {
-							blocks.PrintPath(ts, analysis)
+							blocks.PrintPath(ts, analysis, pset)
 							ts.Entry().Visualize()
 						}
 					}

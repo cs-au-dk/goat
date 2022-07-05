@@ -38,7 +38,7 @@ func (o Blocks) String() string {
 	return str
 }
 
-func (o Blocks) PrintPath(G SuperlocGraph, A L.Analysis) {
+func (o Blocks) PrintPath(G SuperlocGraph, A L.Analysis, C utils.SSAValueSet) {
 	// Print shortest path to blocking configuration
 	for sl := range o {
 
@@ -110,6 +110,10 @@ func (o Blocks) PrintPath(G SuperlocGraph, A L.Analysis) {
 
 				utils.Prompt()
 			}
+		}
+
+		if len(path) > 0 {
+			fmt.Println(A.GetUnsafe(path[0].sl).Memory().ForChannels(C))
 		}
 	}
 }

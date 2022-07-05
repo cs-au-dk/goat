@@ -2,6 +2,7 @@ package lattice
 
 import (
 	loc "Goat/analysis/location"
+	"Goat/utils"
 	i "Goat/utils/indenter"
 	"Goat/utils/tree"
 	"fmt"
@@ -356,5 +357,12 @@ func (mem Memory) Filter(pred func(loc.AddressableLocation, AbstractValue) bool)
 func (mem Memory) Channels() Memory {
 	return mem.Filter(func(al loc.AddressableLocation, av AbstractValue) bool {
 		return av.IsChan()
+	})
+}
+
+func (mem Memory) ForChannels(C utils.SSAValueSet) Memory {
+	return mem.Filter(func(al loc.AddressableLocation, av AbstractValue) bool {
+		s, ok := al.GetSite()
+		return av.IsChan() && ok && C.Contains(s)
 	})
 }
