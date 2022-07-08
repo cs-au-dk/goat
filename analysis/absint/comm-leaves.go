@@ -200,8 +200,6 @@ func (C AnalysisCtxt) computeCommunicationLeaves(g defs.Goro, mem L.Memory, cl d
 	C.Metrics.AddCommOp(cl)
 
 	switch n := cl.Node().(type) {
-	case *cfg.FunctionEntry:
-		return map[defs.CtrLoc]bool{cl: true}, mops.Memory()
 	case *cfg.FunctionExit:
 		return map[defs.CtrLoc]bool{cl: true}, mops.Memory()
 	case *cfg.TerminateGoro:

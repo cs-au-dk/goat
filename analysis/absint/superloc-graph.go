@@ -1,7 +1,9 @@
 package absint
 
 import (
+	"Goat/analysis/cfg"
 	L "Goat/analysis/lattice"
+	T "Goat/analysis/transition"
 	"Goat/utils/graph"
 	"Goat/utils/hmap"
 	"Goat/utils/worklist"
@@ -48,6 +50,58 @@ func (G SuperlocGraph) Size() int {
 		res++
 	})
 	return res
+}
+
+func (G SuperlocGraph) PrunePanics() SuperlocGraph {
+	G.ForEach(func(ac *AbsConfiguration) {
+		terminal := true
+		for _, succ := range ac.Successors {
+			if !succ.configuration.IsPanicked() {
+				terminal = false
+			}
+		}
+
+		// If all successors are panicked, abort pruning.
+		// This avoids reporting spurious blocks for configurations where threads may only progress by panicking
+		if terminal {
+			return
+		}
+		for _, succ := range ac.Successors {
+			if succ.configuration.IsPanicked() {
+				ac.RemoveSuccessor(succ)
+			}
+		}
+	})
+
+	return G
+}
+
+func (G SuperlocGraph) Compress() SuperlocGraph {
+	G.ForEach(func(ac *AbsConfiguration) {
+		for _, succ := range ac.Successors {
+			s := succ.Configuration()
+
+			switch t := succ.Transition().(type) {
+			case T.In:
+				compressCallEdge := func(n cfg.Node) {
+					for _, ss := range s.Successors {
+						ac.AddSuccessor(ss)
+						ac.RemoveSuccessor(succ)
+					}
+				}
+
+				n := s.GetUnsafe(t.Progressed).Node()
+				switch n := n.(type) {
+				case *cfg.PostCall:
+					compressCallEdge(n)
+				case *cfg.PostDeferCall:
+					compressCallEdge(n)
+				}
+			}
+		}
+	})
+
+	return G
 }
 
 func (G SuperlocGraph) PrettyPrint() {

@@ -86,8 +86,19 @@ func (s *AbsConfiguration) GetUnsafe(g defs.Goro) defs.CtrLoc {
 	return s.superloc.GetUnsafe(g)
 }
 
+func (s *AbsConfiguration) RemoveSuccessor(s1 Successor) {
+	delete(s.Successors, s1.Hash())
+}
+
 func (s *AbsConfiguration) AddPredecessor(s1 *AbsConfiguration) {
 	s.predecessors[s1.Hash()] = s1
+}
+
+func (s *AbsConfiguration) RemovePredecessor(s1 *AbsConfiguration) {
+	s1h := s1.Hash()
+	if _, ok := s.predecessors[s1h]; ok {
+		delete(s.predecessors, s1h)
+	}
 }
 
 // Statefully set the threads in the given configuration.
@@ -176,8 +187,6 @@ func (s *AbsConfiguration) isAtRelevantSilentNode(
 	switch n := cl.Node().(type) {
 	case *cfg.Select:
 		return !C.FocusedSelect(n, g, mem)
-	case *cfg.FunctionEntry:
-		return true
 	case *cfg.FunctionExit:
 		return true
 	case *cfg.DeferCall:

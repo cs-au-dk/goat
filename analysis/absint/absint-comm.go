@@ -171,15 +171,6 @@ func (s *AbsConfiguration) GetCommSuccessors(
 						tIn(progress1(cl), g1),
 						as)
 				})
-
-			case *cfg.PostDeferCall:
-				// For deferred calls we must filter the successors based on which defers are charged.
-				for _, succ := range filterDeferSuccessors() {
-
-					S.succUpdate(tIn(progress1(succ), g1), state)
-				}
-			case *cfg.FunctionEntry:
-				S.succUpdate(tIn(progress1(c1.Successor()), g1), state)
 			case *cfg.FunctionExit:
 				anyFound := false
 				// Only propagate control to charged successors.
