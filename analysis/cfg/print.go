@@ -76,21 +76,35 @@ func PrintCfgFromNode(n Node) {
 }
 
 // Print the position of the nearest node with a valid position
-func PrintNodePosition(n Node, fs *token.FileSet) bool {
-	if n.Pos().IsValid() {
-		log.Println("Original construct found at:",
-			fs.Position(n.Pos()))
-		return true
-	}
-	for pred := range n.Predecessors() {
-		if PrintNodePosition(pred, fs) {
+func PrintNodePosition(n Node, fs *token.FileSet) {
+	var printNodePosition func(n Node) bool
+
+	visit := make(map[Node]struct{})
+
+	printNodePosition = func(n Node) bool {
+		if _, ok := visit[n]; ok {
+			return false
+		}
+
+		visit[n] = struct{}{}
+
+		if n.Pos().IsValid() {
+			log.Println("Original construct found at:",
+				fs.Position(n.Pos()))
 			return true
 		}
-	}
-	for succ := range n.Successors() {
-		if PrintNodePosition(succ, fs) {
-			return true
+		for pred := range n.Predecessors() {
+			if printNodePosition(pred) {
+				return true
+			}
 		}
+		for succ := range n.Successors() {
+			if printNodePosition(succ) {
+				return true
+			}
+		}
+		return false
 	}
-	return false
+
+	printNodePosition(n)
 }
