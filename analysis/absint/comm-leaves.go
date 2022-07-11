@@ -282,6 +282,10 @@ func (C AnalysisCtxt) computeCommunicationLeaves(g defs.Goro, state L.AnalysisSt
 		return getCommSuccs(n.Channel(), cfg.SynthTypes.COMM_SEND)
 	case *cfg.SelectDefault:
 		return map[defs.CtrLoc]struct{}{cl: {}}, state
+	// case *cfg.PostCall:
+	// 	return map[defs.CtrLoc]struct{}{cl: {}}, state
+	// case *cfg.PostDeferCall:
+	// 	return map[defs.CtrLoc]struct{}{cl: {}}, state
 	case *cfg.BuiltinCall:
 		if n.Builtin().Name() == "close" {
 			// Make sure wildcards get swapped:

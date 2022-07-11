@@ -191,6 +191,10 @@ func (s *AbsConfiguration) isAtRelevantSilentNode(
 		return true
 	case *cfg.DeferCall:
 		return true
+	// case *cfg.PostCall:
+	// 	return true
+	// case *cfg.PostDeferCall:
+	// 	return true
 	case *cfg.SSANode:
 		switch n.Instruction().(type) {
 		case *ssa.Call:

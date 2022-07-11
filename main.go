@@ -696,7 +696,7 @@ func main() {
 				// Log all the found blocking bugs.
 				blocks = ai.BlockAnalysis(C, G.PrunePanics().Compress(), A)
 				blocks.ForEach(func(sl defs.Superloc, gs map[defs.Goro]struct{}) {
-					fmt.Printf("%s ↦ %s\n", sl, A.GetUnsafe(sl).ProjectMemory())
+					fmt.Printf("%s ↦ %s\n", sl, A.GetUnsafe(sl))
 				})
 				blocks.Log()
 				if opts.Visualize() {

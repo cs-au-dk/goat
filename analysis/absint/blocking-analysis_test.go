@@ -89,18 +89,18 @@ func BlockAnalysisTest(
 					t.Fatalf("Could not identify matching goroutine for %s?", ann)
 				}
 
-				mem := result.GetUnsafe(sl).Memory()
+				stack, heap := result.GetUnsafe(sl).Stack(), result.GetUnsafe(sl).Heap()
 				cl := sl.GetUnsafe(g)
 
 				// Print some information about the operands of the instruction the goroutine is blocked at
 				explanation := ""
 				if ssaNode, ok := cl.Node().(*cfg.SSANode); ok {
 					for _, oper := range ssaNode.Instruction().Operands(nil) {
-						val := evaluateSSA(g, mem, *oper)
+						val := evaluateSSA(g, stack, *oper)
 						explanation = fmt.Sprintf("%s\n%s = %v\n", explanation, (*oper).Name(), val)
 
 						if val.IsPointer() {
-							mops := L.MemOps(mem)
+							mops := L.MemOps(heap)
 							for _, ptr := range val.PointerValue().FilterNil().Entries() {
 								if _, isFun := ptr.(loc.FunctionPointer); !isFun {
 									explanation = fmt.Sprintf("%s%v ↦ %v\n", explanation, ptr, mops.GetUnsafe(ptr))

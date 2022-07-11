@@ -187,7 +187,7 @@ var swapCache struct {
 
 // Swap a wildcard value with the result of the upfront analysis.
 // Produces a memory where the value has been updated.
-func SwapWildcard(pt *pointer.Result, state L.AnalysisState, l loc.AddressableLocation) L.AnalysisState {
+func SwapWildcard(g defs.Goro, pt *pointer.Result, state L.AnalysisState, l loc.AddressableLocation) L.AnalysisState {
 	// Check if swapCache needs to be invalidated
 	if pt != swapCache.pt {
 		swapCache.pt = pt
@@ -280,7 +280,7 @@ func SwapWildcard(pt *pointer.Result, state L.AnalysisState, l loc.AddressableLo
 		swapCache.cache[ssaVal] = ptl
 	}
 
-	stack, heap := state.Stack(), state.Heap()
+	stack, heap := state.Stack().GetUnsafe(g), state.Heap()
 	stack = stack.Update(l, L.Elements().AbstractPointerV().UpdatePointer(ptl))
 
 	allocateOrSet := func(key loc.AddressableLocation, value L.AbstractValue) {
@@ -386,7 +386,7 @@ func SwapWildcard(pt *pointer.Result, state L.AnalysisState, l loc.AddressableLo
 			allocateOrSet(l2, allocTopValue(t))
 		}
 	})
-	return state.UpdateStack(stack).UpdateHeap(heap)
+	return state.UpdateStack(state.Stack().Update(g, stack)).UpdateHeap(heap)
 }
 
 // Kept for further notice

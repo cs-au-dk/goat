@@ -3,11 +3,9 @@ package lattice
 import (
 	"Goat/analysis/defs"
 	loc "Goat/analysis/location"
-	i "Goat/utils/indenter"
-	"fmt"
 )
 
-//go:generate go run generate-product.go AnalysisState Stack,Memory,Memory,Stack Heap,Memory,Memory,Heap ThreadCharges,ThreadCharges,ThreadCharges,Charges
+//go:generate go run generate-product.go AnalysisState Stack,AnalysisStateStack,AnalysisStateStack,Stack Heap,Memory,Memory,Heap ThreadCharges,ThreadCharges,ThreadCharges,Charges
 
 type AnalysisStateLattice struct {
 	ProductLattice
@@ -20,7 +18,7 @@ func (latticeFactory) AnalysisState() *AnalysisStateLattice {
 var analysisStateLattice *AnalysisStateLattice = &AnalysisStateLattice{
 	*latFact.Product(
 		// Local memory - binds SSA register names
-		memoryLattice,
+		analysisStateStackLattice,
 		// Heap memory - binds arbitrary heap locations
 		memoryLattice,
 		threadChargesLattice,
@@ -42,7 +40,7 @@ func init() {
 	_checkAnalysisState(analysisStateLattice.Bot().(AnalysisState))
 }
 
-func (elementFactory) AnalysisState(stack, heap Memory, ch ThreadCharges) AnalysisState {
+func (elementFactory) AnalysisState(stack AnalysisStateStack, heap Memory, ch ThreadCharges) AnalysisState {
 	return AnalysisState{
 		element: element{analysisStateLattice},
 		product: elFact.Product(analysisStateLattice.Product())(
@@ -56,14 +54,22 @@ func (elementFactory) AnalysisState(stack, heap Memory, ch ThreadCharges) Analys
 func (s AnalysisState) Get(l loc.Location) (AbstractValue, bool) {
 	switch l := l.(type) {
 	case loc.LocalLocation:
-		return s.Stack().Get(l)
+		g := l.Goro.(defs.Goro)
+		return s.Stack().GetUnsafe(g).Get(l)
 	}
 	return MemOps(s.Heap()).Get(l)
 }
 func (s AnalysisState) Update(l loc.Location, v AbstractValue) AnalysisState {
 	switch l := l.(type) {
 	case loc.LocalLocation:
-		return s.UpdateStack(s.Stack().Update(l, v))
+		g := l.Goro.(defs.Goro)
+		gStack, ok := s.Stack().Get(g)
+		if ok {
+			gStack = gStack.Update(l, v)
+		} else {
+			gStack = Consts().FreshMemory().Update(l, v)
+		}
+		return s.UpdateStack(s.Stack().Update(g, gStack))
 	}
 
 	heap := MemOps(s.Heap()).Update(l, v).Memory()
@@ -73,12 +79,12 @@ func (s AnalysisState) Update(l loc.Location, v AbstractValue) AnalysisState {
 func (s AnalysisState) GetUnsafe(l loc.Location) (v AbstractValue) {
 	switch l := l.(type) {
 	case loc.LocalLocation:
-		return s.Stack().GetUnsafe(l)
+		return s.Stack().GetUnsafe(l.Goro.(defs.Goro)).GetUnsafe(l)
 	}
 	return MemOps(s.Heap()).GetUnsafe(l)
 }
 
-func (s AnalysisState) UpdateMemory(stack, heap Memory) AnalysisState {
+func (s AnalysisState) UpdateMemory(stack AnalysisStateStack, heap Memory) AnalysisState {
 	return s.UpdateStack(stack).UpdateHeap(heap)
 }
 
@@ -123,29 +129,33 @@ func (s AnalysisState) Allocate(loc loc.AllocationSiteLocation, initVal Abstract
 	return s.UpdateHeap(s.Heap().Allocate(loc, initVal, forceMultiAlloc))
 }
 
-func (a AnalysisState) ProjectMemory() string {
-	stackBuf := make([]func() string, 0, a.Stack().Size())
-	heapBuf := make([]func() string, 0, a.Heap().Size())
-
-	a.Stack().ForEach(func(al loc.AddressableLocation, av AbstractValue) {
-		stackBuf = append(stackBuf, func() string {
-			return fmt.Sprintf("%s ↦ %s", al, av)
-		})
-	})
-	a.Heap().ForEach(func(al loc.AddressableLocation, av AbstractValue) {
-		heapBuf = append(stackBuf, func() string {
-			return fmt.Sprintf("%s ↦ %s", al, av)
-		})
-	})
-
-	return i.Indenter().Start("").NestThunked(
-		func() string {
-			return i.Indenter().Start(colorize.Lattice("Stack") + ": {").NestThunked(stackBuf...).End("}\n")
-		},
-		func() string {
-			return i.Indenter().Start(colorize.Lattice("End") + ": {").NestThunked(heapBuf...).End("}")
-		}).End("")
+func (s AnalysisState) UpdateThreadStack(g defs.Goro, stack Memory) AnalysisState {
+	return s.UpdateStack(s.Stack().Update(g, stack))
 }
+
+// func (a AnalysisState) ProjectMemory() string {
+// 	stackBuf := make([]func() string, 0, a.Stack().Size())
+// 	heapBuf := make([]func() string, 0, a.Heap().Size())
+
+// 	a.Stack().ForEach(func(al loc.AddressableLocation, av AbstractValue) {
+// 		stackBuf = append(stackBuf, func() string {
+// 			return fmt.Sprintf("%s ↦ %s", al, av)
+// 		})
+// 	})
+// 	a.Heap().ForEach(func(al loc.AddressableLocation, av AbstractValue) {
+// 		heapBuf = append(heapBuf, func() string {
+// 			return fmt.Sprintf("%s ↦ %s", al, av)
+// 		})
+// 	})
+
+// 	return i.Indenter().Start("").NestThunked(
+// 		func() string {
+// 			return i.Indenter().Start(colorize.Lattice("Stack") + ": {").NestThunked(stackBuf...).End("}\n")
+// 		},
+// 		func() string {
+// 			return i.Indenter().Start(colorize.Lattice("End") + ": {").NestThunked(heapBuf...).End("}")
+// 		}).End("")
+// }
 
 // func (a AnalysisState) ChanMemory() string {
 // 	return a.Memory().Filter(func(_ loc.AddressableLocation, av AbstractValue) bool {

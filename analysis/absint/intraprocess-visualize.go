@@ -50,7 +50,7 @@ func VisualizeIntraprocess(
 		if !found {
 			label := cl.String()
 			if !cl.Panicked() {
-				label += "\n" + StringifyNodeArguments(g, analysis[cl].Memory(), cl.Node())
+				label += "\n" + StringifyNodeArguments(g, analysis[cl].Stack(), cl.Node())
 			}
 
 			node = &dot.DotNode{
@@ -113,8 +113,7 @@ func VisualizeIntraprocess(
 	G.ShowDot()
 }
 
-
-func StringifyNodeArguments(g defs.Goro, mem L.Memory, node cfg.Node) (label string) {
+func StringifyNodeArguments(g defs.Goro, stack L.AnalysisStateStack, node cfg.Node) (label string) {
 	var ops []ssa.Value
 	if n, ok := node.(*cfg.SSANode); ok {
 		for _, pval := range n.Instruction().Operands(nil) {
@@ -134,7 +133,7 @@ func StringifyNodeArguments(g defs.Goro, mem L.Memory, node cfg.Node) (label str
 					}
 				}()
 
-				label += evaluateSSA(g, mem, op).String()
+				label += evaluateSSA(g, stack, op).String()
 			}()
 			label += "\n"
 		}

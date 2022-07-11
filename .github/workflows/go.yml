@@ -1,0 +1,36 @@
+
+name: Go
+
+on: push
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Set up Go
+      uses: actions/setup-go@v2
+      with:
+        go-version: 1.18
+
+    - uses: actions/checkout@v2
+
+    - uses: actions/cache@v2
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+    - name: Generate
+      run: |
+        go install golang.org/x/tools/cmd/goimports@latest
+        go generate ./...
+    - name: Build
+      run: go build -v Goat
+
+    - name: Short test
+      run: go test -short ./...
+
+    - name: GoKer test
+      run: go test ./analysis/absint -run GoKer -timeout 30m

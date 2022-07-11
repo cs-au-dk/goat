@@ -433,7 +433,7 @@ func (p prepAI) prep(
 
 	// Define initial state
 	state := Elements().AnalysisState(
-		L.Consts().FreshMemory(),
+		L.Consts().FreshStacks().Update(goro, L.Consts().FreshMemory()),
 		L.PopulateGlobals(
 			Lattices().Memory().Bot().Memory(),
 			loadRes.Prog.AllPackages(),
@@ -452,7 +452,7 @@ func (p prepAI) prep(
 		for _, fv := range entryFun.FreeVars {
 			vals = append(vals, loc.LocationFromSSAValue(goro, fv))
 		}
-		state = state.UpdateStack(state.Stack().InjectTopValues(vals...))
+		state = state.UpdateThreadStack(goro, state.Stack().GetUnsafe(goro).InjectTopValues(vals...))
 	}
 
 	C := AnalysisCtxt{

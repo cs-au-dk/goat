@@ -36,8 +36,9 @@ type absIntTest struct {
 
 type spoofedGoro struct{}
 
-func (spoofedGoro) String() string { return "spoofed-goroutine" }
-func (spoofedGoro) Hash() uint32   { return 42 }
+func (spoofedGoro) String() string      { return "spoofed-goroutine" }
+func (spoofedGoro) Hash() uint32        { return 42 }
+func (spoofedGoro) CtrLoc() defs.CtrLoc { panic("") }
 
 func TestAbstractInterpretation(t *testing.T) {
 	chLoc := loc.LocalLocation{

@@ -25,6 +25,10 @@ func (c consts) FreshMemory() Memory {
 	return memoryLattice.Bot().Memory()
 }
 
+func (c consts) FreshStacks() AnalysisStateStack {
+	return analysisStateStackLattice.Bot().AnalysisStateStack()
+}
+
 func (c consts) BotValue() AbstractValue {
 	return valueLattice.Bot().AbstractValue()
 }

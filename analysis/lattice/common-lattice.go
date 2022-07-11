@@ -24,6 +24,7 @@ type Lattice interface {
 	AbstractValue() *AbstractValueLattice
 	Analysis() *AnalysisLattice
 	AnalysisIntraprocess() *AnalysisIntraprocessLattice
+	AnalysisStateStack() *AnalysisStateStackLattice
 	ChannelInfo() *ChannelInfoLattice
 	Flat() *FlatLattice
 	FlatFinite() *FlatFiniteLattice
@@ -62,6 +63,10 @@ func (*lattice) Analysis() *AnalysisLattice {
 }
 
 func (*lattice) AnalysisIntraprocess() *AnalysisIntraprocessLattice {
+	panic(errUnsupportedTypeConversion)
+}
+
+func (*lattice) AnalysisStateStack() *AnalysisStateStackLattice {
 	panic(errUnsupportedTypeConversion)
 }
 

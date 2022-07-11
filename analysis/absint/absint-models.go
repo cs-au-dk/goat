@@ -164,13 +164,13 @@ func (C AnalysisCtxt) stdCall(
 		val := Elements().AbstractCond()
 		cond := val.CondValue()
 
-		val = val.Update(cond.UpdateLocker(stack.GetUnsafe(lockLoc).PointerValue()))
+		val = val.Update(cond.UpdateLocker(stack.GetLocUnsafe(lockLoc).PointerValue()))
 
 		hops := L.MemOps(heap)
 		ptr := hops.HeapAlloc(allocSite, val)
 
 		return updMem(state.
-			UpdateStack(stack.Update(callLoc, ptr)).
+			UpdateStack(stack.UpdateLoc(callLoc, ptr)).
 			UpdateHeap(hops.Memory()))
 	}
 
@@ -190,7 +190,7 @@ func (C AnalysisCtxt) stdCall(
 		hops := L.MemOps(heap)
 		ptr := hops.HeapAlloc(allocSite, val)
 		return updMem(state.
-			UpdateStack(stack.Update(callLoc, ptr)).
+			UpdateStack(stack.UpdateLoc(callLoc, ptr)).
 			UpdateHeap(hops.Memory()))
 
 	case "time.NewTimer":

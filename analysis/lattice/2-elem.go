@@ -134,6 +134,10 @@ func (twoElementLatticeElement) AnalysisIntraprocess() AnalysisIntraprocess {
 	panic(errUnsupportedTypeConversion)
 }
 
+func (twoElementLatticeElement) AnalysisStateStack() AnalysisStateStack {
+	panic(errUnsupportedTypeConversion)
+}
+
 func (twoElementLatticeElement) ChannelInfo() ChannelInfo {
 	panic(errUnsupportedTypeConversion)
 }

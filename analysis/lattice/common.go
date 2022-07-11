@@ -63,6 +63,7 @@ type Element interface {
 	AnalysisState() AnalysisState
 	Analysis() Analysis
 	AnalysisIntraprocess() AnalysisIntraprocess
+	AnalysisStateStack() AnalysisStateStack
 	ChannelInfo() ChannelInfo
 	Charges() Charges
 	Dropped() *DroppedTop
@@ -120,6 +121,10 @@ func (element) Analysis() Analysis {
 }
 
 func (element) AnalysisIntraprocess() AnalysisIntraprocess {
+	panic(errUnsupportedTypeConversion)
+}
+
+func (element) AnalysisStateStack() AnalysisStateStack {
 	panic(errUnsupportedTypeConversion)
 }
 

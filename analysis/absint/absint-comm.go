@@ -27,7 +27,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 	S = make(transfers)
 
 	upd := func(succ Successor, newMem L.AnalysisState) {
-		S.succUpdate(succ, state)
+		S.succUpdate(succ, newMem)
 	}
 
 	simpleLeaf := func(tid1 defs.Goro, c1 defs.CtrLoc) {
@@ -158,14 +158,14 @@ func (s *AbsConfiguration) GetCommSuccessors(
 				// NOTE: We cannot use GetUnsafe because goroutines spawned on builtins
 				// get wired up as `builtin -> functionexit` (to trigger goroutine termination).
 				// We instead assert that a return value exists when we actually need it.
-				returnVal, hasReturnVal := stack.Get(loc.ReturnLocation(g1, n1.Function()))
+				returnVal, hasReturnVal := stack.GetLoc(loc.ReturnLocation(g1, n1.Function()))
 
 				for succ := range c1.Successors() {
 					// Workaround for letting init function-exit progress to main function-entry
 					if sNode, isEntry := succ.Node().(*cfg.FunctionEntry); isEntry &&
 						n1.Function().Name() == "init" && sNode.Function().Name() == "main" {
 						anyFound = true
-						S.succUpdate(tIn1(succ), state.UpdateStack(retStack))
+						S.succUpdate(tIn1(succ), state.UpdateThreadStack(g1, retStack))
 					} else {
 						for _, succExiting := range [...]bool{false, true} {
 							// Check if a charged successor exists with either value of the exiting flag
@@ -181,7 +181,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 									}
 
 									value := ssaNode.Instruction().(*ssa.Call)
-									retStack.Update(loc.LocationFromSSAValue(g1, value), returnVal)
+									retStack = retStack.Update(loc.LocationFromSSAValue(g1, value), returnVal)
 								}
 
 								// We can remove the charged post-call node from the state if we know that the
@@ -216,7 +216,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 									succ = succ.WithExiting(true)
 								}
 
-								S.succUpdate(tIn1(succ), state.UpdateStack(retStack))
+								S.succUpdate(tIn1(succ), state.UpdateThreadStack(g1, retStack))
 							}
 						}
 					}
@@ -245,7 +245,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 					})
 				case *ssa.If:
 
-					updatePhiNodes := func(fromBlock, toBlock *ssa.BasicBlock) L.Memory {
+					updatePhiNodes := func(fromBlock, toBlock *ssa.BasicBlock) L.AnalysisStateStack {
 						// Update phi nodes in toBlock with the values coming from fromBlock.
 						predIdx := -1
 						for i, pred := range toBlock.Preds {
@@ -264,7 +264,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 						stack := state.Stack()
 						for _, instr := range toBlock.Instrs {
 							if phi, ok := instr.(*ssa.Phi); ok {
-								stack = stack.Update(
+								stack = stack.UpdateLoc(
 									loc.LocationFromSSAValue(g1, phi),
 									evalSSA(phi.Edges[predIdx]),
 								)
@@ -629,7 +629,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 						// results will be joined at the same superlocation.
 						refinedMem := attemptValueRefine(g1, state, opReg1, Elements().AbstractPointerV(n1.Loc))
 						upd(Successor{
-							progress1(cl),
+							progress1(c1.Predecessor().Successor()),
 							T.Send{Progressed: g1, Chan: n1.Loc},
 						},
 							// Update channel value in memory
@@ -806,7 +806,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 				// Get SSA location for operand.
 				opReg := n1.Args()[0]
 				// Get abstract value of operand.
-				initVal := evaluateSSA(g1, heap, opReg)
+				initVal := evaluateSSA(g1, stack, opReg)
 				// Assume value is a points-to set
 				ptChan := initVal.PointerValue()
 

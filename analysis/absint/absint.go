@@ -66,7 +66,7 @@ func makeChannelWithBotPayload(
 	return av.Update(ch)
 }
 
-func evaluateSSA(g defs.Goro, stack L.Memory, val ssa.Value) L.AbstractValue {
+func evaluateSSA(g defs.Goro, stack L.AnalysisStateStack, val ssa.Value) L.AbstractValue {
 	switch n := val.(type) {
 	// The following values do not correspond to virtual registers
 	case *ssa.Const:
@@ -102,7 +102,7 @@ func evaluateSSA(g defs.Goro, stack L.Memory, val ssa.Value) L.AbstractValue {
 
 	// We can get the value from the register stored in memory
 	loc := loc.LocationFromSSAValue(g, val)
-	fval, found := stack.Get(loc)
+	fval, found := stack.GetUnsafe(g).Get(loc)
 	if found {
 		return fval
 	} else {
@@ -227,7 +227,7 @@ var ErrUnboundedGoroutineSpawn = errors.New("Unbounded goroutine spawns detected
 func (C AnalysisCtxt) swapWildcardLoc(g defs.Goro, state L.AnalysisState, l loc.AddressableLocation) (
 	L.AbstractValue, L.AnalysisState,
 ) {
-	state = A.SwapWildcard(C.LoadRes.Pointer, state, l)
+	state = A.SwapWildcard(g, C.LoadRes.Pointer, state, l)
 	C.LogWildcardSwap(state.Heap(), l)
 	av := state.GetUnsafe(l)
 
@@ -348,13 +348,13 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 	}
 
 	singleUpd := func(state L.AnalysisState) {
-		C.CheckMemory(state.Stack())
+		// C.CheckMemory(state.Stack())
 		C.CheckMemory(state.Heap())
 		succs = succs.Update(cl.Successor(), state)
 	}
 
-	singleStackUp := func(stack L.Memory) {
-		singleUpd(state.UpdateStack(heap))
+	singleStackUp := func(stack L.AnalysisStateStack) {
+		singleUpd(state.UpdateStack(stack))
 	}
 
 	// Filter the set of successors such that we only proceed to "charged" defer calls
@@ -421,7 +421,7 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 		stack := state.Stack()
 		for _, instr := range toBlock.Instrs {
 			if phi, ok := instr.(*ssa.Phi); ok {
-				stack = stack.Update(
+				stack = stack.UpdateLoc(
 					loc.LocationFromSSAValue(g, phi),
 					evalSSA(phi.Edges[predIdx]),
 				)
@@ -447,9 +447,7 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 			// We set the return value to bottom to avoid crashes when looking it up.
 			succs = succs.Update(
 				cl.Derive(n.PanicCont()),
-				state.UpdateStack(
-					stack.Update(loc.ReturnLocation(g, n.Function()), L.Consts().BotValue()),
-				),
+				state.Update(loc.ReturnLocation(g, n.Function()), L.Consts().BotValue()),
 			)
 		} else {
 			noop()
@@ -461,7 +459,7 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 			// Optimistically assume built-in recover calls are always performed
 			// when not panicking, making the results nil. Any branching on the
 			// recover pointer will resolve to the nil branch
-			singleStackUp(stack.Update(
+			singleStackUp(stack.UpdateLoc(
 				loc.LocationFromSSAValue(g, n.Call.Value()),
 				L.Elements().AbstractPointerV(loc.NilLocation{}),
 			))
@@ -527,7 +525,7 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 			// (For use in indirection wrappers.)
 			argV := evalSSA(n.Args()[0])
 			if argV.IsWildcard() {
-				singleStackUp(stack.Update(
+				singleStackUp(stack.UpdateLoc(
 					loc.LocationFromSSAValue(g, n.Call.Value()),
 					argV,
 				))
@@ -535,7 +533,7 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 				if ptrV := argV.PointerValue().FilterNilCB(func() {
 					succs = succs.Update(cl.Panic(), state)
 				}); !ptrV.Empty() {
-					singleStackUp(stack.Update(
+					singleStackUp(stack.UpdateLoc(
 						loc.LocationFromSSAValue(g, n.Call.Value()),
 						argV.UpdatePointer(ptrV),
 					))
@@ -659,7 +657,7 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 				// No wildcard swap because it is unlikely to improve precision.
 				// (Which can only happen if the wildcard represents 0 allocation sites).
 				x, y := evalSSA(val.X), evalSSA(val.Y)
-				res = A.BinOp(stack, x, y, val)
+				res = A.BinOp(stack.GetUnsafe(g), x, y, val)
 
 				/*
 					Special case loops guards for loops over slices to avoid false positives
@@ -703,7 +701,7 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 				}
 
 				state = state.HeapAlloc(allocSite, Elements().AbstractClosure(val.Fn, bindings))
-				res = state.GetUnsafe(allocSite)
+				res = Elements().AbstractPointerV(allocSite)
 			case *ssa.MakeSlice:
 				// Used to create slices of dynamic length (and capacity).
 				eType := val.Type().Underlying().(*T.Slice).Elem()
@@ -719,7 +717,7 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 					Elements().AbstractMap(
 						L.ZeroValueForType(kTyp).ToBot(),
 						L.ZeroValueForType(vTyp).ToBot()))
-				res = state.GetUnsafe(allocSite)
+				res = Elements().AbstractPointerV(allocSite)
 
 			case *ssa.Lookup:
 				// Lookup can be used on both strings and maps.
@@ -917,7 +915,7 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 
 			case *ssa.MakeInterface:
 				state = state.HeapAlloc(allocSite, evalSSA(val.X))
-				res = state.GetUnsafe(allocSite)
+				res = Elements().AbstractPointerV(allocSite)
 
 			case *ssa.TypeAssert:
 				v, newState := swapWildcard(state, val.X)
