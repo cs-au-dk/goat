@@ -584,7 +584,7 @@ func main() {
 					log.Println(color.GreenString("SA completed in %s", C.Metrics.Performance()))
 					completes++
 
-					ts = ts.Compress()
+					ts = ts.PrunePanics().Compress()
 					blocks := ai.BlockAnalysis(C, ts, analysis)
 					if len(blocks) == 0 {
 						log.Println(color.GreenString("No blocking bugs detected"))
@@ -690,13 +690,13 @@ func main() {
 				G, A := ai.StaticAnalysis(C)
 				log.Println("Done")
 				fmt.Println()
-				log.Println("Analysis result:\n", A.ProjectMemory())
+				log.Println("Analysis result:\n", A)
 				// if G.Size() > 3 {
 				// }
 				// Log all the found blocking bugs.
 				blocks = ai.BlockAnalysis(C, G.PrunePanics().Compress(), A)
 				blocks.ForEach(func(sl defs.Superloc, gs map[defs.Goro]struct{}) {
-					fmt.Printf("%s ↦ %s\n", sl, A.GetUnsafe(sl).Memory())
+					fmt.Printf("%s ↦ %s\n", sl, A.GetUnsafe(sl).ProjectMemory())
 				})
 				blocks.Log()
 				if opts.Visualize() {

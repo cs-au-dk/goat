@@ -143,10 +143,10 @@ func (cl CtrLoc) Derive(n cfg.Node) CtrLoc {
 }
 
 // Derive a batch of control locations from the provided set of control flow nodes.
-func (cl CtrLoc) DeriveBatch(mp map[cfg.Node]struct{}) map[CtrLoc]bool {
-	res := make(map[CtrLoc]bool)
+func (cl CtrLoc) DeriveBatch(mp map[cfg.Node]struct{}) map[CtrLoc]struct{} {
+	res := make(map[CtrLoc]struct{})
 	for n := range mp {
-		res[cl.Derive(n)] = true
+		res[cl.Derive(n)] = struct{}{}
 	}
 	return res
 }

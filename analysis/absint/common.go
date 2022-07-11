@@ -432,7 +432,8 @@ func (p prepAI) prep(
 	s0.Target = goro
 
 	// Define initial state
-	initState := Elements().AnalysisState(
+	state := Elements().AnalysisState(
+		L.Consts().FreshMemory(),
 		L.PopulateGlobals(
 			Lattices().Memory().Bot().Memory(),
 			loadRes.Prog.AllPackages(),
@@ -451,16 +452,14 @@ func (p prepAI) prep(
 		for _, fv := range entryFun.FreeVars {
 			vals = append(vals, loc.LocationFromSSAValue(goro, fv))
 		}
-		mem := initState.Memory()
-		initState = initState.UpdateMemory(
-			mem.InjectTopValues(vals...))
+		state = state.UpdateStack(state.Stack().InjectTopValues(vals...))
 	}
 
 	C := AnalysisCtxt{
 		Function:  entryFun,
 		LoadRes:   loadRes,
 		InitConf:  s0,
-		InitState: initState,
+		InitState: state,
 		Metrics:   p.InitializeMetrics()(entryFun),
 	}
 

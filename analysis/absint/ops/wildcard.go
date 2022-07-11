@@ -187,7 +187,7 @@ var swapCache struct {
 
 // Swap a wildcard value with the result of the upfront analysis.
 // Produces a memory where the value has been updated.
-func SwapWildcard(pt *pointer.Result, mem L.Memory, l loc.AddressableLocation) L.Memory {
+func SwapWildcard(pt *pointer.Result, state L.AnalysisState, l loc.AddressableLocation) L.AnalysisState {
 	// Check if swapCache needs to be invalidated
 	if pt != swapCache.pt {
 		swapCache.pt = pt
@@ -280,13 +280,14 @@ func SwapWildcard(pt *pointer.Result, mem L.Memory, l loc.AddressableLocation) L
 		swapCache.cache[ssaVal] = ptl
 	}
 
-	mem = mem.Update(l, L.Elements().AbstractPointerV().UpdatePointer(ptl))
+	stack, heap := state.Stack(), state.Heap()
+	stack = stack.Update(l, L.Elements().AbstractPointerV().UpdatePointer(ptl))
 
 	allocateOrSet := func(key loc.AddressableLocation, value L.AbstractValue) {
 		if l, isAllocSite := key.(loc.AllocationSiteLocation); isAllocSite {
-			mem = mem.Allocate(l, value, true)
+			heap = heap.Allocate(l, value, true)
 		} else {
-			mem = mem.Update(key, value)
+			heap = heap.Update(key, value)
 		}
 	}
 
@@ -301,9 +302,9 @@ func SwapWildcard(pt *pointer.Result, mem L.Memory, l loc.AddressableLocation) L
 			// to bind to a top value.
 			defer func() {
 				if err := recover(); err != nil {
-					mops := L.MemOps(mem)
-					v, _ := mops.Get(l)
-					v2, _ := mops.Get(l2)
+					hops := L.MemOps(heap)
+					v, _ := hops.Get(l)
+					v2, _ := hops.Get(l2)
 					fmt.Println("Original location", l, "has site", ssaVal, "of type", ssaVal.Type())
 					fmt.Println("Points to sites: {")
 					locs := labelsToAllocs(pt.Queries[ssaVal])
@@ -385,7 +386,7 @@ func SwapWildcard(pt *pointer.Result, mem L.Memory, l loc.AddressableLocation) L
 			allocateOrSet(l2, allocTopValue(t))
 		}
 	})
-	return mem
+	return state.UpdateStack(stack).UpdateHeap(heap)
 }
 
 // Kept for further notice

@@ -41,11 +41,11 @@ func (C AnalysisCtxt) TopInjectParams(
 	callIns ssa.CallInstruction,
 	g defs.Goro,
 	state L.AnalysisState,
-	blacklists map[*ssa.Function]struct{}) L.Memory {
+	blacklists map[*ssa.Function]struct{}) L.AnalysisState {
 	// Blacklisted functions may involve side-effects on pointer-like arguments.
 	// All locations that are members of points-to sets of the arguments
 	// must be top injected to over-approximate potential side effects.
-	mops := L.MemOps(state.Memory())
+	hops := L.MemOps(state.Heap())
 	visited := map[loc.Location]bool{}
 
 	sideffects := C.LoadRes.WrittenFields
@@ -63,7 +63,7 @@ func (C AnalysisCtxt) TopInjectParams(
 					l.Equal(loc.NilLocation{}) ||
 					visited[l]) {
 					visited[l] = true
-					av := mops.GetUnsafe(l)
+					av := hops.GetUnsafe(l)
 
 					rec(av)
 
@@ -111,7 +111,7 @@ func (C AnalysisCtxt) TopInjectParams(
 									}
 								})
 
-								mops.Update(l, av.Update(sv))
+								hops.Update(l, av.Update(sv))
 								updated = true
 							}
 						}
@@ -119,7 +119,7 @@ func (C AnalysisCtxt) TopInjectParams(
 
 					if !updated {
 						//log.Println(callIns, l, "from", av)
-						mops.Update(l, av.ToTop())
+						hops.Update(l, av.ToTop())
 					}
 				}
 			})
@@ -131,17 +131,17 @@ func (C AnalysisCtxt) TopInjectParams(
 			rec(v.ChanValue().Payload())
 		case v.IsCond() && v.CondValue().IsLockerKnown():
 			v.CondValue().KnownLockers().FilterNil().ForEach(func(l loc.Location) {
-				TOP := mops.GetUnsafe(l).ToTop()
-				mops.Update(l, TOP)
+				TOP := hops.GetUnsafe(l).ToTop()
+				hops.Update(l, TOP)
 			})
 		}
 	}
 
 	for _, arg := range callIns.Common().Args {
-		rec(evaluateSSA(g, mops.Memory(), arg))
+		rec(evaluateSSA(g, state.Stack(), arg))
 	}
 
-	return mops.Memory()
+	return state.UpdateHeap(hops.Memory())
 }
 
 func (C AnalysisCtxt) callSuccs(
@@ -167,26 +167,25 @@ func (C AnalysisCtxt) callSuccs(
 	}
 
 	postCall := n.CallRelationNode()
-	newState := state
 
 	// A call node might miss a post-call node if the Andersen pointer analysis knows
 	// that the receiver is nil. I.e. if the call is guaranteed to panic.
 	if postCall != nil {
-		// Add a charge for the post call site
-		newState = state.AddCharges(g, cl.Derive(postCall))
-
 		// First check for skippable method invocations
 		if callIns.Common().IsInvoke() {
-			mem, hasModel := C.stdInvoke(g, callIns, state.Memory())
+			state, hasModel := C.stdInvoke(g, callIns, state)
 			if hasModel {
 				// Skip call relation node to avoid single-silent handling of post-call node
-				succs = succs.Update(cl.CallRelationNode().Successor(), state.UpdateMemory(mem))
+				succs = succs.Update(cl.Derive(postCall).Successor(), state)
 				return succs
 			}
 		}
+
+		// Add a charge for the post call site
+		state = state.AddCharges(g, cl.Derive(postCall))
 	}
 
-	paramTransfers, mayPanic := C.transferParams(*callIns.Common(), g, g, state.Memory())
+	paramTransfers, mayPanic := C.transferParams(*callIns.Common(), g, g, state)
 
 	if mayPanic {
 		succs = succs.Update(cl.Panic(), state)
@@ -221,7 +220,7 @@ func (C AnalysisCtxt) callSuccs(
 
 		sfun := succ.Node().Function()
 
-		newMem, found := paramTransfers[sfun]
+		newState, found := paramTransfers[sfun]
 		if !found {
 			// Skip any kind of handling for calls that the abstract
 			// interpreter knows cannot occur.
@@ -236,7 +235,7 @@ func (C AnalysisCtxt) callSuccs(
 		} else {
 			C.Metrics.ExpandFunction(sfun)
 			// Clear the exiting flag when entering a function
-			succs = succs.Update(succ.WithExiting(false), newState.UpdateMemory(newMem))
+			succs = succs.Update(succ.WithExiting(false), newState)
 			expandedFunctions[sfun] = struct{}{}
 		}
 	}
@@ -244,13 +243,12 @@ func (C AnalysisCtxt) callSuccs(
 	if len(blacklists) > 0 {
 		// Spoof the call if it may be blacklisted
 		// Top-inject parameters of the call to account for stateful side-effects
-		mem := C.TopInjectParams(callIns, g, state, blacklists)
+		state := C.TopInjectParams(callIns, g, state, blacklists)
 
 		succs = succs.WeakUpdate(
 			cl.Derive(postCall),
-			state.UpdateMemory(
-				// Spoof call by top-injecting the return value location
-				spoofCall(g, callIns, mem)),
+			// Spoof call by top-injecting the return value location
+			spoofCall(g, callIns, state),
 		)
 	}
 
@@ -270,22 +268,22 @@ func (C AnalysisCtxt) callSuccs(
 func (C AnalysisCtxt) transferParams(
 	call ssa.CallCommon,
 	fromG, toG defs.Goro,
-	initMem L.Memory,
-) (res map[*ssa.Function]L.Memory, mayPanic bool) {
-	res = make(map[*ssa.Function]L.Memory)
+	state L.AnalysisState,
+) (res map[*ssa.Function]L.AnalysisState, mayPanic bool) {
+	res = make(map[*ssa.Function]L.AnalysisState)
 
 	if _, ok := call.Value.(*ssa.Builtin); ok {
 		// We are transferring parameters into a goroutine started with a direct call to a builtin:
 		// go println(i)
 		// This needs to be handled differently.
 		// We transfer ssa register values from the first to the second goroutine.
-		newMem := initMem
+		newMem := state
 		for _, arg := range call.Args {
 			// Skip constants, they don't need to be transferred (and they don't have a location)
 			if _, ok := arg.(*ssa.Const); !ok {
 				newMem = newMem.Update(
 					loc.LocationFromSSAValue(toG, arg),
-					evaluateSSA(fromG, initMem, arg),
+					evaluateSSA(fromG, state.Stack(), arg),
 				)
 			}
 		}
@@ -298,7 +296,7 @@ func (C AnalysisCtxt) transferParams(
 	// Pre-evaluate arguments
 	var aArgs []L.AbstractValue
 	for _, ssaVal := range call.Args {
-		aArgs = append(aArgs, evaluateSSA(fromG, initMem, ssaVal))
+		aArgs = append(aArgs, evaluateSSA(fromG, state.Stack(), ssaVal))
 	}
 
 	type callTarget struct {
@@ -306,8 +304,7 @@ func (C AnalysisCtxt) transferParams(
 		args    []L.AbstractValue
 	}
 
-	v, mem := C.swapWildcard(fromG, initMem, call.Value)
-	initMem = mem
+	v, state := C.swapWildcard(fromG, state, call.Value)
 	bases := v.PointerValue().FilterNilCB(func() { mayPanic = true })
 	C.CheckPointsTo(bases)
 	targets := map[*ssa.Function]callTarget{}
@@ -340,7 +337,7 @@ func (C AnalysisCtxt) transferParams(
 				fun = prog.LookupMethod(makeItf.X.Type(), call.Method.Pkg(), call.Method.Name())
 			}
 
-			receiver := initMem.GetUnsafe(aloc)
+			receiver := state.GetUnsafe(aloc)
 
 			if tar, exists := targets[fun]; exists {
 				// Join receiver with existing receivers
@@ -358,7 +355,7 @@ func (C AnalysisCtxt) transferParams(
 				targets[ptr.Fun] = callTarget{args: aArgs}
 
 			case loc.AddressableLocation:
-				closure := initMem.GetUnsafe(ptr)
+				closure := state.GetUnsafe(ptr)
 				targets[closure.Closure()] = callTarget{
 					closure.StructValue(),
 					aArgs,
@@ -373,11 +370,11 @@ func (C AnalysisCtxt) transferParams(
 	if len(targets) == 0 && !mayPanic {
 		panic(fmt.Errorf("no targets computed for call: %s with recv/value %s",
 			call.String(),
-			evaluateSSA(fromG, initMem, call.Value)))
+			evaluateSSA(fromG, state.Stack(), call.Value)))
 	}
 
 	for fun, target := range targets {
-		newMem := initMem
+		newMem := state
 		for i, argv := range target.args {
 			newMem = newMem.Update(
 				loc.LocationFromSSAValue(toG, fun.Params[i]),

@@ -17,7 +17,7 @@ import (
 // FIXME: Relies on idiomatic Go patterns and state assumptions.
 func (C AnalysisCtxt) stdInvoke(g defs.Goro,
 	call ssa.CallInstruction,
-	mem L.Memory) (res L.Memory, hasModel bool) {
+	state L.AnalysisState) (res L.AnalysisState, hasModel bool) {
 	method := call.Common().Method
 	t := method.Type()
 	switch method.Name() {
@@ -35,9 +35,9 @@ func (C AnalysisCtxt) stdInvoke(g defs.Goro,
 
 			cv := call.Value()
 			if cv == nil {
-				return mem, true
+				return state, true
 			}
-			return mem.Update(loc.LocationFromSSAValue(g, cv), L.Consts().BasicTopValue()), true
+			return state.Update(loc.LocationFromSSAValue(g, cv), L.Consts().BasicTopValue()), true
 		}
 	case "String":
 		// TODO: Code duplication here.
@@ -54,13 +54,13 @@ func (C AnalysisCtxt) stdInvoke(g defs.Goro,
 
 			cv := call.Value()
 			if cv == nil {
-				return mem, true
+				return state, true
 			}
-			return mem.Update(loc.LocationFromSSAValue(g, cv), L.Consts().BasicTopValue()), true
+			return state.Update(loc.LocationFromSSAValue(g, cv), L.Consts().BasicTopValue()), true
 		}
 	}
 
-	return mem, false
+	return state, false
 }
 
 // TODO: too ad-hoc...
@@ -69,12 +69,12 @@ func (C AnalysisCtxt) stdCall(
 	call ssa.CallInstruction,
 	state L.AnalysisState, fun *ssa.Function,
 ) (rsuccs L.AnalysisIntraprocess, hasModel bool) {
+	var callLoc loc.LocalLocation
+	var allocSite loc.AllocationSiteLocation
 	if fun.Pkg == nil {
 		return rsuccs, false
 	}
 
-	var callLoc loc.LocalLocation
-	var allocSite loc.AllocationSiteLocation
 	if cv := call.Value(); cv != nil {
 		callLoc = loc.LocationFromSSAValue(g, cv)
 
@@ -85,14 +85,15 @@ func (C AnalysisCtxt) stdCall(
 		}
 	}
 
-	updMem := func(newMem L.Memory) (L.AnalysisIntraprocess, bool) {
-		return Elements().AnalysisIntraprocess().Update(
-			cl.CallRelationNode(),
-			state.UpdateMemory(newMem),
-		), true
+	stack, heap := state.Stack(), state.Heap()
+
+	updMem := func(state L.AnalysisState) (L.AnalysisIntraprocess, bool) {
+		return Elements().AnalysisIntraprocess().Update(cl.CallRelationNode(), state), true
 	}
 
-	mem := state.Memory()
+	evalSSA := func(v ssa.Value) L.AbstractValue {
+		return evaluateSSA(g, stack, v)
+	}
 
 	// Used by time.NewTimer and time.NewTicker
 	constructTimer := func() (L.AnalysisIntraprocess, bool) {
@@ -135,22 +136,23 @@ func (C AnalysisCtxt) stdCall(
 					log.Fatalln("???")
 				}
 
-				mops := L.MemOps(mem)
+				hops := L.MemOps(state.Heap())
 
-				chPtr := mops.HeapAlloc(loc.AllocationSiteLocation{
+				chPtr := hops.HeapAlloc(loc.AllocationSiteLocation{
 					Goro:    g,
 					Context: fun,
 					Site:    mkChan.(*ssa.MakeChan),
 				}, chVal)
 				timerVal = timerVal.Update(timerVal.StructValue().Update(i, chPtr))
-				mem = mops.Memory()
+				heap = hops.Memory()
 				break
 			}
 		}
 
-		mops := L.MemOps(mem)
-		ptr := mops.HeapAlloc(allocSite, timerVal)
-		return updMem(mops.Memory().Update(callLoc, ptr))
+		hops := L.MemOps(heap)
+		ptr := hops.HeapAlloc(allocSite, timerVal)
+		newState := state.UpdateHeap(hops.Memory().Update(callLoc, ptr))
+		return updMem(newState)
 	}
 
 	constructCond := func() (L.AnalysisIntraprocess, bool) {
@@ -162,14 +164,15 @@ func (C AnalysisCtxt) stdCall(
 		val := Elements().AbstractCond()
 		cond := val.CondValue()
 
-		val = val.Update(cond.UpdateLocker(mem.GetUnsafe(lockLoc).PointerValue()))
+		val = val.Update(cond.UpdateLocker(stack.GetUnsafe(lockLoc).PointerValue()))
 
-		mops := L.MemOps(mem)
-		ptr := mops.HeapAlloc(allocSite, val)
+		hops := L.MemOps(heap)
+		ptr := hops.HeapAlloc(allocSite, val)
 
-		return updMem(mops.Memory().Update(callLoc, ptr))
+		return updMem(state.
+			UpdateStack(stack.Update(callLoc, ptr)).
+			UpdateHeap(hops.Memory()))
 	}
-
 
 	funName := fun.String()
 	switch funName {
@@ -180,11 +183,15 @@ func (C AnalysisCtxt) stdCall(
 			1,
 		)
 		ch := val.ChanValue()
-		mops := L.MemOps(mem)
 		payloadType := call.Value().Type().(*T.Chan).Elem()
-		ptr := mops.HeapAlloc(allocSite,
-			val.Update(ch.UpdatePayload(L.ZeroValueForType(payloadType))))
-		return updMem(mops.Memory().Update(callLoc, ptr))
+		payload := L.ZeroValueForType(payloadType)
+		val = val.Update(ch.UpdatePayload(payload))
+
+		hops := L.MemOps(heap)
+		ptr := hops.HeapAlloc(allocSite, val)
+		return updMem(state.
+			UpdateStack(stack.Update(callLoc, ptr)).
+			UpdateHeap(hops.Memory()))
 
 	case "time.NewTimer":
 		return constructTimer()
@@ -192,19 +199,20 @@ func (C AnalysisCtxt) stdCall(
 		return constructTimer()
 	case "(*sync.RWMutex).RLocker":
 		if !utils.Opts().SkipSync() {
-			lockVal := evaluateSSA(g, mem, call.Common().Args[0])
-			mops := L.MemOps(mem)
-			ptr := mops.HeapAlloc(allocSite, lockVal)
-			return updMem(mops.Memory().Update(callLoc, ptr))
+			lockVal := evalSSA(call.Common().Args[0])
+			hops := L.MemOps(heap)
+			ptr := hops.HeapAlloc(allocSite, lockVal)
+			return updMem(state.UpdateHeap(hops.Memory().Update(callLoc, ptr)))
 		}
 	case "os/signal.Notify":
 		// Set channel passed to Notify as a top channel.
 		// TODO: This can be improved, e. g. closing a Notify channel is unsafe, since that
 		// channel could be erroneously closed.
-		if ch := evaluateSSA(g, mem, call.Common().Args[0]); ch.IsWildcard() {
-			return updMem(mem)
+		if ch := evalSSA(call.Common().Args[0]); ch.IsWildcard() {
+			return updMem(state)
 		} else {
-			return updMem(mem.LocsToTop(ch.PointerValue().NonNilEntries()...))
+			heap = heap.LocsToTop(ch.PointerValue().NonNilEntries()...)
+			return updMem(state.UpdateHeap(heap))
 		}
 
 	case "sync.NewCond":
@@ -218,24 +226,24 @@ func (C AnalysisCtxt) stdCall(
 
 		// TODO: Panic when the receiver can be nil (or maybe it is already handled earlier?)
 
-		wrapped, mem, _ := C.wrapPointers(g, mem, call.Common().Args[0], 0)
+		wrapped, state, _ := C.wrapPointers(g, state, call.Common().Args[0], 0)
 		fieldPointers := wrapped.PointerValue()
 
-		toStore, mem := C.swapWildcard(g, mem, call.Common().Args[1])
+		toStore, state := C.swapWildcard(g, state, call.Common().Args[1])
 		// TODO: Panic when storing nil
 		toStore = toStore.UpdatePointer(toStore.PointerValue().FilterNil())
 
-		mops := L.MemOps(mem)
-		isWeak := !mops.CanStrongUpdate(fieldPointers)
+		hops := L.MemOps(state.Heap())
+		isWeak := !hops.CanStrongUpdate(fieldPointers)
 		for _, fptr := range fieldPointers.Entries() {
-			mops.UpdateW(fptr, toStore, isWeak)
+			hops.UpdateW(fptr, toStore, isWeak)
 		}
 
-		return updMem(mops.Memory())
+		return updMem(state.UpdateHeap(hops.Memory()))
 	case "(*sync/atomic.Value).Load":
 		// TODO: Panic when the receiver can be nil (or maybe it is already handled earlier?)
-		wrapped, mem, _ := C.wrapPointers(g, mem, call.Common().Args[0], 0)
-		return updMem(mem.Update(callLoc, A.Load(wrapped, mem)))
+		wrapped, state, _ := C.wrapPointers(g, state, call.Common().Args[0], 0)
+		return updMem(state.Update(callLoc, A.Load(wrapped, state.Heap())))
 
 	case "runtime.Goexit",
 		// Handle methods on testing.T that end the test immediately like Goexit.
@@ -261,18 +269,18 @@ func (C AnalysisCtxt) stdCall(
 	return rsuccs, false
 }
 
-func spoofCall(g defs.Goro, call ssa.CallInstruction, mem L.Memory) L.Memory {
+func spoofCall(g defs.Goro, call ssa.CallInstruction, state L.AnalysisState) L.AnalysisState {
 	opts.OnVerbose(func() {
 		log.Println("Spoofing call:", call, "in", call.Parent())
 	})
 
 	if val := call.Value(); val != nil {
 		callLoc := loc.LocationFromSSAValue(g, val)
-		return mem.Update(
+		return state.Update(
 			callLoc,
 			L.TopValueForType(val.Type()),
 		)
-	} else {
-		return mem
 	}
+
+	return state
 }

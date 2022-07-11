@@ -35,15 +35,26 @@ func (a Analysis) GetOrBot(sl defs.Superloc) AnalysisState {
 	return a.GetOrDefault(sl, analysisStateLattice.Bot().AnalysisState())
 }
 
-func (a Analysis) ProjectMemory() string {
+func (a Analysis) ProjectStack() string {
 	buf := make([]func() string, 0, a.Size())
 	a.ForEach(func(s defs.Superloc, as AnalysisState) {
 		buf = append(buf, func() string {
-			return fmt.Sprintf("%s ↦ %s", s, as.Memory())
+			return fmt.Sprintf("%s ↦ %s", s, as.Stack())
 		})
 	})
 
-	return i.Indenter().Start(a.Lattice().String() + ": {").NestThunked(buf...).End("}")
+	return i.Indenter().Start(colorize.Lattice("Stack") + ": {").NestThunked(buf...).End("}")
+}
+
+func (a Analysis) ProjectHeap() string {
+	buf := make([]func() string, 0, a.Size())
+	a.ForEach(func(s defs.Superloc, as AnalysisState) {
+		buf = append(buf, func() string {
+			return fmt.Sprintf("%s ↦ %s", s, as.Heap())
+		})
+	})
+
+	return i.Indenter().Start(colorize.Lattice("Heap") + ": {").NestThunked(buf...).End("}")
 }
 
 func (a Analysis) ChanMemory() string {

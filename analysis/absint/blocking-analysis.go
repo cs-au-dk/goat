@@ -242,7 +242,6 @@ func BlockAnalysis(C AnalysisCtxt, G SuperlocGraph, result L.Analysis) (res Bloc
 
 		// Also skip if one of the goroutines is guaranteed to panic due to
 		// closing or sending on channels that are all _definitely_ closed.
-		mem := analysis.Memory()
 		if _, _, shouldSkip := conf.Superlocation().Find(func(g defs.Goro, cl defs.CtrLoc) bool {
 			var toCheck []ssa.Value
 			switch n := cl.Node().(type) {
@@ -263,10 +262,10 @@ func BlockAnalysis(C AnalysisCtxt, G SuperlocGraph, result L.Analysis) (res Bloc
 			}
 
 			for _, chn := range toCheck {
-				av, mem := C.swapWildcard(g, mem, chn)
+				av, state := C.swapWildcard(g, analysis, chn)
 				chV := L.Consts().BotValue()
 				ops.ToDeref(av).OnSucceed(func(av L.AbstractValue) {
-					chV = ops.Load(av, mem)
+					chV = ops.Load(av, state.Heap())
 				})
 
 				if !chV.IsBot() && chV.ChanValue().Status().Is(false) {

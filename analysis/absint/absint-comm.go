@@ -24,11 +24,10 @@ func (s *AbsConfiguration) GetCommSuccessors(
 		return Successor{s, T.In{Progressed: g}}
 	}
 
-	mem := state.Memory()
 	S = make(transfers)
 
-	updMem := func(succ Successor, newMem L.Memory) {
-		S.succUpdate(succ, state.UpdateMemory(newMem))
+	upd := func(succ Successor, newMem L.AnalysisState) {
+		S.succUpdate(succ, state)
 	}
 
 	simpleLeaf := func(tid1 defs.Goro, c1 defs.CtrLoc) {
@@ -50,39 +49,42 @@ func (s *AbsConfiguration) GetCommSuccessors(
 	// TODO: The method can also be made recursive such that it refines many values.
 	// Here we just have to be careful not to make the analysis unsound, e.g. by refining
 	// "over" previous communication operations.
-	attemptValueRefine := func(g defs.Goro, mem L.Memory, val ssa.Value, av L.AbstractValue) L.Memory {
+	attemptValueRefine := func(g defs.Goro, state L.AnalysisState, val ssa.Value, av L.AbstractValue) L.AnalysisState {
 		switch val.(type) {
 		case *ssa.Global:
-			return mem
+			return state
 		case *ssa.Const:
-			return mem
+			return state
 		}
 
-		return mem.Update(loc.LocationFromSSAValue(g, val), av)
-	}
-
-	mutexOutcomeUpdate := func(
-		cl defs.CtrLoc,
-		t T.Transition,
-		opReg ssa.Value,
-		muLoc loc.Location,
-		g defs.Goro,
-		mem L.Memory) func(L.AbstractValue) {
-		return func(av L.AbstractValue) {
-			newMem := L.MemOps(mem).Update(muLoc, av).Memory()
-			// Making an interface value contain a direct pointer to a mutex is invalid.
-			// (It should point to the allocated interface value, which points to the mutex.)
-			if _, isItf := opReg.Type().Underlying().(*types.Interface); !isItf {
-				newMem = attemptValueRefine(g, newMem, opReg, Elements().AbstractPointerV(muLoc))
-			}
-
-			updMem(Successor{s.Copy().DeriveThread(g, cl), t}, newMem)
-		}
+		return state.Update(loc.LocationFromSSAValue(g, val), av)
 	}
 
 	for g1 := range leaves {
+		stack, heap := state.Stack(), state.Heap()
+
 		progress1 := func(succ defs.CtrLoc) *AbsConfiguration {
 			return s.Copy().DeriveThread(g1, succ)
+		}
+		mutexOutcomeUpdate := func(
+			cl defs.CtrLoc,
+			t T.Transition,
+			opReg ssa.Value,
+			muLoc loc.Location) func(L.AbstractValue) {
+			return func(av L.AbstractValue) {
+				state := state.Update(muLoc, av)
+				// Making an interface value contain a direct pointer to a mutex is invalid.
+				// (It should point to the allocated interface value, which points to the mutex.)
+				if _, isItf := opReg.Type().Underlying().(*types.Interface); !isItf {
+					state = attemptValueRefine(g1, state, opReg, Elements().AbstractPointerV(muLoc))
+				}
+
+				upd(Successor{progress1(cl), t}, state)
+			}
+		}
+
+		evalSSA := func(v ssa.Value) L.AbstractValue {
+			return evaluateSSA(g1, stack, v)
 		}
 		tIn1 := func(succ defs.CtrLoc) Successor {
 			return tIn(progress1(succ), g1)
@@ -111,58 +113,24 @@ func (s *AbsConfiguration) GetCommSuccessors(
 				return
 			}
 
-			updatePhiNodes := func(fromBlock, toBlock *ssa.BasicBlock) L.Memory {
-				// Update phi nodes in toBlock with the values coming from fromBlock.
-				predIdx := -1
-				for i, pred := range toBlock.Preds {
-					if pred == fromBlock {
-						predIdx = i
-						break
-					}
-				}
-
-				if predIdx == -1 {
-					panic("???")
-				}
-
-				// From the documentation:
-				// Within a block, all φ-nodes must appear before all non-φ nodes.
-				newMem := mem
-				for _, instr := range toBlock.Instrs {
-					if phi, ok := instr.(*ssa.Phi); ok {
-						newMem = newMem.Update(
-							loc.LocationFromSSAValue(g1, phi),
-							evaluateSSA(g1, mem, phi.Edges[predIdx]),
-						)
-					} else {
-						break
-					}
-				}
-
-				return newMem
-			}
-
 			switch n1 := c1.Node().(type) {
 			case *cfg.Select:
 				// Select on irrelevant channels
 				for _, op := range n1.Ops() {
 					ncl := c1.Derive(op.Successor())
-					switch op := op.(type) {
-					case *cfg.SelectRcv:
-						newMem := mem
+					newState := state
+					if op, ok := op.(*cfg.SelectRcv); ok {
 						for _, val := range []ssa.Value{op.Val, op.Ok} {
 							if val != nil {
-								newMem = newMem.Update(
+								newState = newState.Update(
 									loc.LocationFromSSAValue(g1, val),
 									L.TopValueForType(val.Type()),
 								)
 							}
 						}
-
-						S.succUpdate(tIn1(ncl), state.UpdateMemory(newMem))
-					default:
-						S.succUpdate(tIn1(ncl), state.UpdateMemory(mem))
 					}
+
+					S.succUpdate(tIn1(ncl), newState)
 				}
 
 			case *cfg.DeferCall:
@@ -176,7 +144,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 				// Only propagate control to charged successors.
 				charged, _ := state.ThreadCharges().Get(g1)
 				//callDAG := C.LoadRes.CallDAG
-				retState := state
+				retStack := L.Consts().FreshMemory()
 
 				/* TODO
 					 Abstract GC is disabled because `canGC` is expensive and because
@@ -190,21 +158,20 @@ func (s *AbsConfiguration) GetCommSuccessors(
 				// NOTE: We cannot use GetUnsafe because goroutines spawned on builtins
 				// get wired up as `builtin -> functionexit` (to trigger goroutine termination).
 				// We instead assert that a return value exists when we actually need it.
-				returnVal, hasReturnVal := mem.Get(loc.ReturnLocation(g1, n1.Function()))
+				returnVal, hasReturnVal := stack.Get(loc.ReturnLocation(g1, n1.Function()))
 
 				for succ := range c1.Successors() {
 					// Workaround for letting init function-exit progress to main function-entry
 					if sNode, isEntry := succ.Node().(*cfg.FunctionEntry); isEntry &&
 						n1.Function().Name() == "init" && sNode.Function().Name() == "main" {
 						anyFound = true
-						S.succUpdate(tIn1(succ), retState)
+						S.succUpdate(tIn1(succ), state.UpdateStack(retStack))
 					} else {
 						for _, succExiting := range [...]bool{false, true} {
 							// Check if a charged successor exists with either value of the exiting flag
 							succ := succ.WithExiting(succExiting)
 							if _, found := charged.Get(succ); found {
 								anyFound = true
-								updatedRetState := retState
 
 								// If the call instruction is a normal call (not defer), we need
 								// to propagate the return value.
@@ -214,9 +181,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 									}
 
 									value := ssaNode.Instruction().(*ssa.Call)
-									updatedRetState = updatedRetState.UpdateMemory(
-										updatedRetState.Memory().Update(loc.LocationFromSSAValue(g1, value), returnVal),
-									)
+									retStack.Update(loc.LocationFromSSAValue(g1, value), returnVal)
 								}
 
 								// We can remove the charged post-call node from the state if we know that the
@@ -251,7 +216,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 									succ = succ.WithExiting(true)
 								}
 
-								S.succUpdate(tIn1(succ), updatedRetState)
+								S.succUpdate(tIn1(succ), state.UpdateStack(retStack))
 							}
 						}
 					}
@@ -279,7 +244,39 @@ func (s *AbsConfiguration) GetCommSuccessors(
 						S.succUpdate(tIn1(cl), as)
 					})
 				case *ssa.If:
-					condV := evaluateSSA(g1, mem, insn.Cond).BasicValue()
+
+					updatePhiNodes := func(fromBlock, toBlock *ssa.BasicBlock) L.Memory {
+						// Update phi nodes in toBlock with the values coming from fromBlock.
+						predIdx := -1
+						for i, pred := range toBlock.Preds {
+							if pred == fromBlock {
+								predIdx = i
+								break
+							}
+						}
+
+						if predIdx == -1 {
+							panic("???")
+						}
+
+						// From the documentation:
+						// Within a block, all φ-nodes must appear before all non-φ nodes.
+						stack := state.Stack()
+						for _, instr := range toBlock.Instrs {
+							if phi, ok := instr.(*ssa.Phi); ok {
+								stack = stack.Update(
+									loc.LocationFromSSAValue(g1, phi),
+									evalSSA(phi.Edges[predIdx]),
+								)
+							} else {
+								break
+							}
+						}
+
+						return stack
+					}
+
+					condV := evalSSA(insn.Cond).BasicValue()
 
 					bl := insn.Block()
 					// Hacking our way around...
@@ -292,7 +289,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 								// The first successor block is used when the test is true,
 								// the second is used when the test is false.
 								if condV.Geq(Elements().Constant(i == 0)) {
-									S.succUpdate(tIn1(succ), state.UpdateMemory(updatePhiNodes(bl, blk)))
+									S.succUpdate(tIn1(succ), state.UpdateStack(updatePhiNodes(bl, blk)))
 								}
 								continue SUCCESSOR
 							}
@@ -304,40 +301,37 @@ func (s *AbsConfiguration) GetCommSuccessors(
 
 			// A Cond value wakes some goroutine
 			case *cfg.CondWaking:
-				mops := L.MemOps(mem)
-				condVal := mops.GetUnsafe(n1.Cnd)
+				condVal := state.GetUnsafe(n1.Cnd)
 				// Reset locker points-to set
 				freshCond := Elements().Cond()
 
-				lockerMem := mem
-				prevLockerMem := mem
+				lockerState := state
+				prevLockerState := state
 				successes := 0
 
 				// If the locker is unknown, optimistically assume
 				// the goroutine may wake without blocking
 				if !condVal.Cond().IsLockerKnown() {
-					updMem(Successor{
+					upd(Successor{
 						progress1(c1.Derive(n1.Predecessor().Successor())),
 						T.Wake{Progressed: g1, Cond: n1.Cnd},
-					}, mops.Memory())
+					}, state)
 					continue
 				}
 
 				// Overapproximate which lockers may successfully exit from the
 				// .Wait call
 				for _, lockerAddr := range condVal.Cond().KnownLockers().NonNilEntries() {
-					lockerMem = lockerMem.MonoJoin(prevLockerMem)
-					locker := mops.GetUnsafe(lockerAddr)
+					lockerState = lockerState.MonoJoin(prevLockerState)
+					locker := state.GetUnsafe(lockerAddr)
 					switch {
 					case locker.IsMutex() || locker.IsRWMutex():
 						log.Fatalln("How did this happen???")
 					case locker.IsPointer():
 						for _, muLoc := range locker.PointerValue().NonNilEntries() {
-							A.CondWake(mops.GetUnsafe(muLoc)).OnSucceed(
+							A.CondWake(state.GetUnsafe(muLoc)).OnSucceed(
 								func(av L.AbstractValue) {
-									mumops := L.MemOps(lockerMem)
-									mumops.Update(muLoc, av)
-									lockerMem = mumops.Memory()
+									lockerState = lockerState.Update(muLoc, av)
 									freshCond = freshCond.AddLocker(lockerAddr)
 									successes++
 								})
@@ -346,42 +340,38 @@ func (s *AbsConfiguration) GetCommSuccessors(
 				}
 
 				if successes > 1 {
-					lockerMem = lockerMem.MonoJoin(prevLockerMem)
+					lockerState = lockerState.MonoJoin(prevLockerState)
 				}
 
 				// NOTE: Before we woke even if successes was 0, was this intended behavior?
 				if successes > 0 {
-					mops = L.MemOps(attemptValueRefine(g1, lockerMem, n1.Predecessor().Cond(), Elements().AbstractPointerV(n1.Cnd)))
+					refine := attemptValueRefine(g1, lockerState,
+						n1.Predecessor().Cond(),
+						Elements().AbstractPointerV(n1.Cnd)).
+						Update(n1.Cnd, condVal.UpdateCond(freshCond))
 
-					mops.Update(n1.Cnd, condVal.UpdateCond(freshCond))
-
-					updMem(Successor{
+					upd(Successor{
 						progress1(c1.Derive(n1.Predecessor().Successor())),
 						T.Wake{Progressed: g1, Cond: n1.Cnd},
-					}, mops.Memory())
+					}, refine)
 				}
 			// A Cond value wants to put some goroutine to sleep
 			case *cfg.CondWait:
-				newMem := mem
-
 				// Get Cond value
-				mops := L.MemOps(newMem)
-				condVal := mops.GetUnsafe(n1.Cnd)
-				freshSuccCond := Elements().AbstractCond()
+				condVal := state.GetUnsafe(n1.Cnd)
 				freshFailCond := Elements().AbstractCond()
 
-				lockerMem := mem
-				prevLockerMem := mem
+				lockerState, prevLockerState := state, state
 				successes := 0
 
 				// If the locker is unknown, then optimistically assume
 				// blocking at Wait succeeds
 				if !condVal.Cond().IsLockerKnown() {
-					updMem(Successor{
+					upd(Successor{
 						// Should step into a Waiting node
 						progress1(c1.Predecessor().Successor()),
 						T.Wait{Progressed: g1, Cond: n1.Cnd},
-					}, mops.Memory())
+					}, state)
 					continue
 				}
 
@@ -390,9 +380,9 @@ func (s *AbsConfiguration) GetCommSuccessors(
 				}
 
 				for _, lockerAddr := range condVal.Cond().KnownLockers().NonNilEntries() {
-					lockerMem = lockerMem.MonoJoin(prevLockerMem)
+					lockerState = lockerState.MonoJoin(prevLockerState)
 
-					if locker := mops.GetUnsafe(lockerAddr); !locker.IsPointer() {
+					if locker := state.GetUnsafe(lockerAddr); !locker.IsPointer() {
 						// NOTE (O): I don't think we ever get into the
 						// Succeed/Panic branches here, since if the interface
 						// does not contain a pointer, it won't contain a mutex
@@ -400,10 +390,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 						A.CondWait(locker).OnSucceed(
 							func(av L.AbstractValue) {
 								log.Fatalln("I don't think this can happen?")
-								mumops := L.MemOps(lockerMem)
-								mumops.Update(lockerAddr, av)
-								lockerMem = mumops.Memory()
-								freshSuccCond = freshSuccCond.AddPointers(lockerAddr)
+								lockerState = lockerState.Update(lockerAddr, av)
 								successes++
 							}).OnPanic(
 							func(av L.AbstractValue) {
@@ -412,12 +399,9 @@ func (s *AbsConfiguration) GetCommSuccessors(
 							})
 					} else {
 						for _, muLoc := range locker.PointerValue().NonNilEntries() {
-							A.CondWait(mops.GetUnsafe(muLoc)).OnSucceed(
+							A.CondWait(state.GetUnsafe(muLoc)).OnSucceed(
 								func(av L.AbstractValue) {
-									mumops := L.MemOps(lockerMem)
-									mumops.Update(muLoc, av)
-									lockerMem = mumops.Memory()
-									freshSuccCond = freshSuccCond.AddPointers(lockerAddr)
+									lockerState = lockerState.Update(muLoc, av)
 									successes++
 								}).OnPanic(
 								func(L.AbstractValue) {
@@ -428,23 +412,22 @@ func (s *AbsConfiguration) GetCommSuccessors(
 				}
 
 				if successes > 0 {
-					mops := L.MemOps(attemptValueRefine(g1, lockerMem, n1.Predecessor().Cond(), Elements().AbstractPointerV(n1.Cnd)))
-					mops.Update(n1.Cnd, condVal)
+					refine := attemptValueRefine(g1, lockerState, n1.Predecessor().Cond(), Elements().AbstractPointerV(n1.Cnd)).Update(n1.Cnd, condVal)
 
-					updMem(Successor{
+					upd(Successor{
 						// Should step into a Waiting node
 						progress1(c1.Predecessor().Successor()),
 						T.Wait{Progressed: g1, Cond: n1.Cnd},
-					}, mops.Memory())
+					}, refine)
 				}
 				if freshFailCond.Cond().HasLockers() {
 					// Should step into the panic continuation (tried to unlock unlocked
 					// mutex)
-					updMem(tIn1(c1.Predecessor().Panic()), mem)
+					upd(tIn1(c1.Predecessor().Panic()), state)
 				}
 			case *cfg.CondSignal:
 				// Refines the .Signal() Cond receiver.
-				refinedMem := attemptValueRefine(g1, mem, n1.Cond(), Elements().AbstractPointerV(n1.Cnd))
+				refinedMem := attemptValueRefine(g1, state, n1.Cond(), Elements().AbstractPointerV(n1.Cnd))
 
 				// Bookmarks whether a definitely parked goroutine waiting
 				// on this Cond was found.
@@ -462,7 +445,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 							if n1.Cnd == n2.Cnd {
 								// A guaranteed partner was found only if the Cond
 								// primitive is not multiallocated.
-								definiteWake = !L.MemOps(mem).IsMultialloc(n1.Cnd)
+								definiteWake = !L.MemOps(heap).IsMultialloc(n1.Cnd)
 
 								newMem := attemptValueRefine(g2, refinedMem, n2.Cond(), Elements().AbstractPointerV(n2.Cnd))
 
@@ -471,7 +454,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 									g2, c2.Predecessor().Successor(),
 								)
 
-								updMem(Successor{
+								upd(Successor{
 									succConf,
 									T.Signal{
 										Progressed1: g1, /* wakes up */
@@ -488,7 +471,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 				// without waking up any goroutine. An over-approximation of concurrent
 				// behavior must take this into account, but could lead to many false positives.
 				if !definiteWake {
-					updMem(Successor{
+					upd(Successor{
 						progress1(c1.Predecessor().CallRelationNode()),
 						T.Signal{
 							Progressed1: g1,
@@ -538,22 +521,22 @@ func (s *AbsConfiguration) GetCommSuccessors(
 					}
 
 					// Refine the .Broadcast() Cond receiver.
-					newMem := attemptValueRefine(g1, mem, n1.Cond(), Elements().AbstractPointerV(n1.Cnd))
+					newState := attemptValueRefine(g1, state, n1.Cond(), Elements().AbstractPointerV(n1.Cnd))
 
 					for _, cand := range candidates {
 						g2, c2 := cand.g, cand.cl
-						newMem = attemptValueRefine(g2, newMem, c2.Node().Cond(), Elements().AbstractPointerV(n1.Cnd))
+						newState = attemptValueRefine(g2, newState, c2.Node().Cond(), Elements().AbstractPointerV(n1.Cnd))
 
 						t.Broadcastees[g2] = struct{}{}
 						sl = sl.DeriveThread(g2, c2.Predecessor().Successor())
 					}
 
-					updMem(Successor{sl, t}, newMem)
+					upd(Successor{sl, t}, newState)
 				}
 
 				// If the Cond is single-allocated, then it is guaranteed that
 				// every goroutine waiting on the same cond will progress.
-				if !L.MemOps(mem).IsMultialloc(n1.Cnd) {
+				if !L.MemOps(heap).IsMultialloc(n1.Cnd) {
 					getSuccessor(candList)
 				} else {
 					// If the Cond is multi-allocated, then it is not guaranteed that all
@@ -580,61 +563,61 @@ func (s *AbsConfiguration) GetCommSuccessors(
 				opReg := n1.Predecessor().Locker()
 
 				// Locking may either succeed or block.
-				A.Lock(L.MemOps(mem).GetUnsafe(n1.Loc)).OnSucceed(
+				A.Lock(state.GetUnsafe(n1.Loc)).OnSucceed(
 					mutexOutcomeUpdate(
 						c1.Predecessor().CallRelationNode(),
 						T.Lock{Progressed: g1, Mu: n1.Loc},
-						opReg, n1.Loc, g1, mem))
+						opReg, n1.Loc))
 			case *cfg.MuUnlock:
 				// Get abstract location of mutex operand
 				opReg := n1.Predecessor().Locker()
 
 				// Unlocking may either succeed or throw a fatal exception.
-				A.Unlock(L.MemOps(mem).GetUnsafe(n1.Loc)).
+				A.Unlock(state.GetUnsafe(n1.Loc)).
 					OnSucceed(
 						mutexOutcomeUpdate(
 							c1.Predecessor().CallRelationNode(),
 							T.Unlock{Progressed: g1, Mu: n1.Loc},
-							opReg, n1.Loc, g1, mem),
+							opReg, n1.Loc),
 					).
 					OnPanic(
 						mutexOutcomeUpdate(
 							c1.Predecessor().Panic(),
 							T.Unlock{Progressed: g1, Mu: n1.Loc},
-							opReg, n1.Loc, g1, mem))
+							opReg, n1.Loc))
 			case *cfg.RWMuRLock:
 				// Get abstract location of read mutex operand
 				opReg := n1.Predecessor().Locker()
 
-				A.RLock(L.MemOps(mem).GetUnsafe(n1.Loc)).
+				A.RLock(L.MemOps(heap).GetUnsafe(n1.Loc)).
 					OnSucceed(
 						mutexOutcomeUpdate(
 							c1.Predecessor().CallRelationNode(),
 							T.Lock{Progressed: g1, Mu: n1.Loc},
-							opReg, n1.Loc, g1, mem))
+							opReg, n1.Loc))
 			case *cfg.RWMuRUnlock:
 				// Get abstract location of read mutex operand
 				opReg := n1.Predecessor().Locker()
 
 				// Get read mutex value
-				A.RUnlock(L.MemOps(mem).GetUnsafe(n1.Loc)).OnSucceed(
+				A.RUnlock(L.MemOps(heap).GetUnsafe(n1.Loc)).OnSucceed(
 					mutexOutcomeUpdate(
 						c1.Predecessor().CallRelationNode(),
 						T.Lock{Progressed: g1, Mu: n1.Loc},
-						opReg, n1.Loc, g1, mem),
+						opReg, n1.Loc),
 				).OnPanic(
 					mutexOutcomeUpdate(
 						c1.Predecessor().Panic(),
 						T.Lock{Progressed: g1, Mu: n1.Loc},
-						opReg, n1.Loc, g1, mem))
+						opReg, n1.Loc))
 			case *cfg.CommSend:
 				// Get abstract location of the channel operand in the instruction.
 				opReg1 := n1.Predecessor().Channel()
 
 				// Retrieve sent value as an abstract value.
-				sentVal := evaluateSSA(g1, mem, n1.Payload())
+				sentVal := evaluateSSA(g1, stack, n1.Payload())
 				// Retrieve channel value.
-				chVal := mem.GetUnsafe(n1.Loc)
+				chVal := heap.GetUnsafe(n1.Loc)
 
 				// Decide on buffer representation (via configuration?)
 				// outcomes := AbsFlatSend(sentVal)(chVal)
@@ -644,18 +627,17 @@ func (s *AbsConfiguration) GetCommSuccessors(
 						// Restrict points-to set of channel operand
 						// to found channel location. If other locations are possible,
 						// results will be joined at the same superlocation.
-						refinedMem := attemptValueRefine(g1, mem, opReg1, Elements().AbstractPointerV(n1.Loc))
-						updMem(Successor{
+						refinedMem := attemptValueRefine(g1, state, opReg1, Elements().AbstractPointerV(n1.Loc))
+						upd(Successor{
 							progress1(cl),
 							T.Send{Progressed: g1, Chan: n1.Loc},
-						}, refinedMem.Update(
+						},
 							// Update channel value in memory
-							n1.Loc, val,
-						))
+							refinedMem.Update(n1.Loc, val))
 					}
 				}
 
-				// The outcomes model here also cover closed synchronous channels.
+				// The outcomes modelled here also cover closed synchronous channels.
 				A.IntervalSend(sentVal)(chVal).OnSucceed(
 					outcomeUpdate(c1.Predecessor().Successor()),
 				).OnPanic(
@@ -690,7 +672,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 								rcv, ok, isTuple := n2.Receiver()
 
 								A.Sync(n2.CommaOk())(chVal).OnSucceed(func(val L.AbstractValue) {
-									newMem := mem
+									newState := state
 
 									// Manage payload
 									if rcv != nil {
@@ -702,25 +684,18 @@ func (s *AbsConfiguration) GetCommSuccessors(
 											val = strukt.Get(0).AbstractValue()
 											okVal := strukt.Get(1).AbstractValue()
 											if isTuple {
-												newMem = newMem.Update(
+												newState = newState.Update(
 													rcvLoc,
 													L.Create().Element().AbstractStructV(sentVal, okVal),
 												)
 											} else {
 												okLoc := loc.LocationFromSSAValue(g2, ok)
-												newMem = newMem.Update(
-													rcvLoc,
-													sentVal,
-												).Update(
-													okLoc,
-													okVal,
-												)
+												newState = newState.
+													Update(rcvLoc, sentVal).
+													Update(okLoc, okVal)
 											}
 										case val.IsChan():
-											newMem = newMem.Update(
-												rcvLoc,
-												sentVal,
-											)
+											newState = newState.Update(rcvLoc, sentVal)
 										}
 									}
 
@@ -730,10 +705,10 @@ func (s *AbsConfiguration) GetCommSuccessors(
 									// Restrict points-to sets of channel operands to
 									// determined locations. If other synchronizations are
 									// possible at the same control locations, results will be joined at the superlocation.
-									newMem = attemptValueRefine(g1, newMem, opReg1, Elements().AbstractPointerV(n1.Loc))
-									newMem = attemptValueRefine(g2, newMem, opReg2, Elements().AbstractPointerV(n2.Loc))
+									newState = attemptValueRefine(g1, newState, opReg1, Elements().AbstractPointerV(n1.Loc))
+									newState = attemptValueRefine(g2, newState, opReg2, Elements().AbstractPointerV(n2.Loc))
 
-									updMem(Successor{
+									upd(Successor{
 										// SAFE: Only one predecessor per communication leaf
 										// Only one successor for communication operation
 										// based on the SSA IR
@@ -744,7 +719,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 											Progressed1: g1,
 											Progressed2: g2,
 										},
-									}, newMem.Update(n1.Loc, val))
+									}, newState.Update(n1.Loc, val))
 								})
 							}
 						}
@@ -759,7 +734,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 				// receives on closed synchronous channels.
 
 				// Retrieve channel value.
-				chVal := mem.GetUnsafe(n1.Loc)
+				chVal := state.GetUnsafe(n1.Loc)
 				rcv, ok, isTuple := n1.Receiver()
 				// Zero value for type.
 				ZERO := Lattices().AbstractValue().Bot().AbstractValue()
@@ -774,7 +749,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 
 				A.IntervalReceive(ZERO, n1.CommaOk())(chVal).
 					OnSucceed(func(val L.AbstractValue) {
-						newMem := mem
+						newState := state
 						// TODO: This code seems very similar to the code for handling val in AbsSync.
 						// Manage the payload.
 						if rcv != nil {
@@ -787,31 +762,31 @@ func (s *AbsConfiguration) GetCommSuccessors(
 								okVal := strukt.Get(1).AbstractValue()
 								payload := val.ChannelInfo().Payload()
 								if isTuple {
-									newMem = newMem.Update(
+									newState = newState.Update(
 										rcvLoc,
 										L.Create().Element().AbstractStructV(payload, okVal),
 									)
 								} else {
 									okLoc := loc.LocationFromSSAValue(g1, ok)
-									newMem = newMem.Update(
+									newState = newState.Update(
 										rcvLoc, payload,
 									).Update(
 										okLoc, okVal)
 								}
 							case val.IsChan():
-								newMem = newMem.Update(rcvLoc, val.ChanValue().Payload())
+								newState = newState.Update(rcvLoc, val.ChanValue().Payload())
 							}
 						}
 
 						// Restrict points-to set of channel operand
 						// to found channel location. If other locations are possible,
 						// results will be joined at the superlocation.
-						newMem = attemptValueRefine(g1, newMem, opReg, Elements().AbstractPointerV(n1.Loc))
+						newState = attemptValueRefine(g1, newState, opReg, Elements().AbstractPointerV(n1.Loc))
 
-						updMem(Successor{
+						upd(Successor{
 							progress1(c1.Predecessor().Successor()),
 							T.Receive{Progressed: g1, Chan: n1.Loc},
-						}, newMem.Update(
+						}, newState.Update(
 							// Update channel value in memory
 							n1.Loc, val,
 						))
@@ -831,26 +806,23 @@ func (s *AbsConfiguration) GetCommSuccessors(
 				// Get SSA location for operand.
 				opReg := n1.Args()[0]
 				// Get abstract value of operand.
-				initVal := evaluateSSA(g1, mem, opReg)
+				initVal := evaluateSSA(g1, heap, opReg)
 				// Assume value is a points-to set
 				ptChan := initVal.PointerValue()
-
-				// Create a copy of memory
-				newMem := mem
 
 				// For every location in the points-to set, get the channel value.
 				for _, chLoc := range ptChan.Entries() {
 					outcomeUpdate := func(cl defs.CtrLoc) func(L.AbstractValue) {
 
 						return func(val L.AbstractValue) {
-							// Needed to avoid overriding newMem outside the closure
-							newMem := newMem
+							// Needed to avoid overriding newState outside the closure
+							newState := state
 							if chLoc, ok := chLoc.(loc.AddressableLocation); ok {
-								newMem = newMem.Update(chLoc, val)
+								newState = newState.Update(chLoc, val)
 							}
-							updMem(Successor{progress1(cl), T.Close{Progressed: g1, Op: n1.Arg(0)}},
+							upd(Successor{progress1(cl), T.Close{Progressed: g1, Op: n1.Arg(0)}},
 								// The channel may be part of the operand's points-to set.
-								attemptValueRefine(g1, newMem, opReg, Elements().AbstractPointerV(chLoc)),
+								attemptValueRefine(g1, newState, opReg, Elements().AbstractPointerV(chLoc)),
 							)
 						}
 					}
@@ -858,7 +830,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 					var outcome L.OpOutcomes
 					switch chLoc := chLoc.(type) {
 					case loc.AddressableLocation:
-						outcome = A.Close(mem.GetUnsafe(chLoc))
+						outcome = A.Close(heap.GetUnsafe(chLoc))
 					case loc.NilLocation:
 						outcome = A.Close(Elements().AbstractChannel())
 					default:

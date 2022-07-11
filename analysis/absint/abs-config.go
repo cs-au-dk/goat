@@ -150,9 +150,9 @@ func (s *AbsConfiguration) IsPanicked() bool {
 	return *s.panicked
 }
 
-func (C AnalysisCtxt) FocusedSelect(node *cfg.Select, g defs.Goro, mem L.Memory) bool {
+func (C AnalysisCtxt) FocusedSelect(node *cfg.Select, g defs.Goro, state L.AnalysisState) bool {
 	for _, param := range cfg.CommunicationPrimitivesOf(node) {
-		av, _ := C.swapWildcard(g, mem, param)
+		av, _ := C.swapWildcard(g, state, param)
 		for _, l := range av.PointerValue().FilterNil().Entries() {
 			// Dig out the allocation site location in case of field pointers
 			for {
@@ -182,11 +182,11 @@ func (C AnalysisCtxt) FocusedSelect(node *cfg.Select, g defs.Goro, mem L.Memory)
 }
 
 func (s *AbsConfiguration) isAtRelevantSilentNode(
-	C AnalysisCtxt, mem L.Memory, g defs.Goro, cl defs.CtrLoc,
+	C AnalysisCtxt, state L.AnalysisState, g defs.Goro, cl defs.CtrLoc,
 ) bool {
 	switch n := cl.Node().(type) {
 	case *cfg.Select:
-		return !C.FocusedSelect(n, g, mem)
+		return !C.FocusedSelect(n, g, state)
 	case *cfg.FunctionExit:
 		return true
 	case *cfg.DeferCall:
@@ -206,13 +206,13 @@ func (s *AbsConfiguration) isAtRelevantSilentNode(
 // Returns whether the control location is a communication operation
 // on a concurrency primitive that is focused (wrt. C).
 func (s *AbsConfiguration) isAtRelevantCommunicationNode(
-	C AnalysisCtxt, mem L.Memory,
+	C AnalysisCtxt, state L.AnalysisState,
 	g defs.Goro, cl defs.CtrLoc,
 ) bool {
 	node := cl.Node()
 	if _, ok := node.(*cfg.Select); ok {
 	}
-	if s.isAtRelevantSilentNode(C, mem, g, cl) {
+	if s.isAtRelevantSilentNode(C, state, g, cl) {
 		return true
 	}
 	if !node.IsCommunicationNode() {
@@ -223,7 +223,7 @@ func (s *AbsConfiguration) isAtRelevantCommunicationNode(
 	}
 
 	for _, param := range cfg.CommunicationPrimitivesOf(node) {
-		av, _ := C.swapWildcard(g, mem, param)
+		av, _ := C.swapWildcard(g, state, param)
 		for _, l := range av.PointerValue().FilterNil().Entries() {
 			// Dig out the allocation site location in case of field pointers
 			for {
@@ -259,7 +259,7 @@ func (s *AbsConfiguration) isAtRelevantCommunicationNode(
 func (s *AbsConfiguration) nextSilentProgress(C AnalysisCtxt, state L.AnalysisState) (ret defs.Goro) {
 	s.ForEach(func(g defs.Goro, cl defs.CtrLoc) {
 		// Discard communication nodes and panicked control locations.
-		if cl.Panicked() || s.isAtRelevantCommunicationNode(C, state.Memory(), g, cl) {
+		if cl.Panicked() || s.isAtRelevantCommunicationNode(C, state, g, cl) {
 			return
 		}
 
@@ -304,12 +304,12 @@ type getSuccResult = struct {
 
 func (s *AbsConfiguration) GetTransitions(
 	C AnalysisCtxt,
-	initState L.AnalysisState) transfers {
+	state L.AnalysisState) transfers {
 
 	// Determine whether any thread should be progressed silently.
-	if progressSilently := s.nextSilentProgress(C, initState); progressSilently != nil {
+	if progressSilently := s.nextSilentProgress(C, state); progressSilently != nil {
 		C.Log.Superloc = s.superloc
-		return s.GetSilentSuccessors(C, progressSilently, initState)
+		return s.GetSilentSuccessors(C, progressSilently, state)
 	}
 
 	// leaves contains the cfg nodes the different goroutines can end up at (without synchronizing).
@@ -324,14 +324,12 @@ func (s *AbsConfiguration) GetTransitions(
 		leaves[g][v] = struct{}{}
 	}
 
-	mops := L.MemOps(initState.Memory())
-
 	// Populate the leaves maps
 	s.ForEach(func(g defs.Goro, cl defs.CtrLoc) {
 
-		iterateLeaves := func(ls map[defs.CtrLoc]bool) {
+		iterateLeaves := func(ls map[defs.CtrLoc]struct{}) {
 			for w := range ls {
-				if s.isAtRelevantSilentNode(C, initState.Memory(), g, w) {
+				if s.isAtRelevantSilentNode(C, state, g, w) {
 					if !needsSilentTransitions {
 						leaves = make(map[defs.Goro]map[defs.CtrLoc]struct{})
 						needsSilentTransitions = true
@@ -343,45 +341,33 @@ func (s *AbsConfiguration) GetTransitions(
 			}
 		}
 
+		var ls map[defs.CtrLoc]struct{}
 		switch n := cl.Node().(type) {
 		case *cfg.Select:
-			if C.FocusedSelect(n, g, initState.Memory()) {
+			if C.FocusedSelect(n, g, state) {
 				for _, op := range n.Ops() {
-					ls, mem := C.computeCommunicationLeaves(g, mops.Memory(), cl.Derive(op))
-					mops = L.MemOps(mem)
+					ls, state = C.computeCommunicationLeaves(g, state, cl.Derive(op))
 					iterateLeaves(ls)
 				}
 			} else {
-				ls, mem := C.computeCommunicationLeaves(g, mops.Memory(), cl)
-				mops = L.MemOps(mem)
+				ls, state = C.computeCommunicationLeaves(g, state, cl)
 				iterateLeaves(ls)
 			}
 		default:
-			ls, mem := C.computeCommunicationLeaves(g, mops.Memory(), cl)
-			mops = L.MemOps(mem)
+			ls, state = C.computeCommunicationLeaves(g, state, cl)
 			iterateLeaves(ls)
 		}
 	})
-
-	// Check whether the root thread has progressed to termination.
-	// If so, cut off abstract interpretation here.
-	// if _, ok := s.superloc.GetUnsafe(s.superloc.Main()).Node().(*cfg.TerminateGoro); ok {
-	// 	return nil
-	// }
-
-	if mops.Memory().Lattice() == nil {
-		log.Fatal("Memory is nil?", mops)
-	}
 
 	if needsSilentTransitions {
 		g := nextSilentLeaves(leaves)
 		return s.GetCommSuccessors(C,
 			map[defs.Goro]map[defs.CtrLoc]struct{}{
 				g: leaves[g],
-			}, initState)
+			}, state)
 		// Find communication partners and other transitions
 	} else {
-		return s.GetCommSuccessors(C, leaves, initState.UpdateMemory(mops.Memory()))
+		return s.GetCommSuccessors(C, leaves, state)
 	}
 }
 
@@ -417,7 +403,7 @@ func (s *AbsConfiguration) GetSilentSuccessors(
 	// or a panicked control location.
 	stopCond := func(cl defs.CtrLoc) bool {
 		n := cl.Node()
-		if s.isAtRelevantCommunicationNode(C, analysis[cl].Memory(), g, cl) {
+		if s.isAtRelevantCommunicationNode(C, analysis[cl], g, cl) {
 			return true
 		}
 
@@ -508,12 +494,12 @@ FIXPOINT:
 			transition:    T.In{Progressed: g},
 		}, state)
 	}
-	derive := func(succ defs.CtrLoc) *AbsConfiguration {
+	progress := func(succ defs.CtrLoc) *AbsConfiguration {
 		return s.Copy().DeriveThread(g, succ)
 	}
 	addTermination := func(cl defs.CtrLoc, state L.AnalysisState, cause int) {
 		addResult(
-			derive(cl.Derive(
+			progress(cl.Derive(
 				cfg.AddSynthetic(cfg.SynthConfig{
 					Type:             cfg.SynthTypes.TERMINATE_GORO,
 					Function:         cl.Node().Function(),
@@ -528,8 +514,8 @@ FIXPOINT:
 		switch {
 		case cl.Panicked():
 			fallthrough
-		case s.isAtRelevantCommunicationNode(C, state.Memory(), g, cl):
-			addResult(derive(cl), state)
+		case s.isAtRelevantCommunicationNode(C, state, g, cl):
+			addResult(progress(cl), state)
 		case len(n.Spawns()) > 0:
 			radix := g.Spawn(cl).GetRadix()
 			// The next available index for a goroutine spawn.
@@ -551,30 +537,27 @@ FIXPOINT:
 			C.CheckMaxSuperloc(s.superloc, spawnee)
 			callIns := n.(*cfg.SSANode).Instruction().(*ssa.Go)
 
-			paramTransfers, mayPanic := C.transferParams(
-				callIns.Call,
-				g, spawnee, state.Memory(),
-			)
+			paramTransfers, mayPanic := C.transferParams(callIns.Call, g, spawnee, state)
 
 			if mayPanic {
-				addResult(s.Copy().DeriveThread(g, cl.Panic()), state)
+				addResult(progress(cl.Panic()), state)
 			}
 
 			blacklists := make(map[*ssa.Function]struct{})
 			for entry := range n.Spawns() {
-				newMem, found := paramTransfers[entry.Function()]
+				newState, found := paramTransfers[entry.Function()]
 				switch entry.(type) {
 				case *cfg.BuiltinCall:
 					// Builtins are special...
-					newMem, found = paramTransfers[nil]
+					newState, found = paramTransfers[nil]
 				case *cfg.APIConcBuiltinCall:
-					newMem := state.Memory()
+					newState := state
 					for _, arg := range callIns.Call.Args {
 						// Skip constants, they don't need to be transferred (and they don't have a location)
 						if _, ok := arg.(*ssa.Const); !ok {
-							newMem = newMem.Update(
+							newState = newState.Update(
 								loc.LocationFromSSAValue(spawnee, arg),
-								evaluateSSA(g, state.Memory(), arg),
+								evaluateSSA(g, state.Stack(), arg),
 							)
 						}
 					}
@@ -600,7 +583,7 @@ FIXPOINT:
 								entry.Block().Parent(),
 								false),
 						).DeriveThread(g, cl.Successor()),
-						state.UpdateMemory(newMem))
+						newState)
 					continue
 				}
 
@@ -637,7 +620,7 @@ FIXPOINT:
 								entry.Function(),
 								false),
 						).DeriveThread(g, cl.Successor()),
-						state.UpdateMemory(newMem))
+						newState)
 				} else {
 					blacklists[entry.Function()] = struct{}{}
 				}
@@ -646,10 +629,9 @@ FIXPOINT:
 			if len(blacklists) > 0 {
 				// Otherwise, do not create a goroutine, and just top-inject
 				// the parameters into the analysis state.
-				mem := C.TopInjectParams(callIns, g, state, blacklists)
 				addResult(
-					s.Copy().DeriveThread(g, cl.Successor()),
-					state.UpdateMemory(mem))
+					progress(cl.Successor()),
+					C.TopInjectParams(callIns, g, state, blacklists))
 			}
 		}
 	}

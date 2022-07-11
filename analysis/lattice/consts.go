@@ -21,6 +21,10 @@ func Consts() consts {
 	return _consts
 }
 
+func (c consts) FreshMemory() Memory {
+	return memoryLattice.Bot().Memory()
+}
+
 func (c consts) BotValue() AbstractValue {
 	return valueLattice.Bot().AbstractValue()
 }

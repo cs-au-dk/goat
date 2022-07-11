@@ -324,8 +324,7 @@ func (w Memory) String() string {
 		return buf[i] < buf[j]
 	})
 
-	return colorize.Field("Memory") + ": " +
-		i.Indenter().Start("{").NestStrings(buf...).End("}")
+	return i.Indenter().Start("{").NestStrings(buf...).End("}")
 }
 
 // Type conversion

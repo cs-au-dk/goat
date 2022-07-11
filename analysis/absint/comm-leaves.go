@@ -14,18 +14,17 @@ import (
 
 // Determine what are the possible successor locations when synchronizing for a single thread.
 // Uses the points-to set as an indicator.
-func (C AnalysisCtxt) computeCommunicationLeaves(g defs.Goro, mem L.Memory, cl defs.CtrLoc) (res map[defs.CtrLoc]bool, newMem L.Memory) {
-	mops := L.MemOps(mem)
-
+func (C AnalysisCtxt) computeCommunicationLeaves(g defs.Goro, state L.AnalysisState, cl defs.CtrLoc) (res map[defs.CtrLoc]struct{}, newState L.AnalysisState) {
 	getPrimitives := func(v ssa.Value) L.PointsTo {
-		ptSet, mem := C.getConcPrimitivesForValue(g, mops.Memory(), v)
-		mops = L.MemOps(mem)
+		ptSet, newState := C.getConcPrimitivesForValue(g, state, v)
+		state = newState
 
 		return ptSet
 	}
 
-	getCommSuccs := func(v ssa.Value, typ cfg.SYNTH_TYPE_ID) (res map[defs.CtrLoc]bool, newMem L.Memory) {
-		res = make(map[defs.CtrLoc]bool)
+	getCommSuccs := func(v ssa.Value, typ cfg.SYNTH_TYPE_ID) (
+		res map[defs.CtrLoc]struct{}, newMem L.AnalysisState) {
+		res = make(map[defs.CtrLoc]struct{})
 		// TODO: Properly handle nil channel
 		ptSet := getPrimitives(v).FilterNil()
 		toSync := ptSet
@@ -59,7 +58,7 @@ func (C AnalysisCtxt) computeCommunicationLeaves(g defs.Goro, mem L.Memory, cl d
 			commNode := cfg.CreateSynthetic(config)
 			commNode.AddPredecessor(cl.Node())
 
-			res[cl.Derive(commNode)] = true
+			res[cl.Derive(commNode)] = struct{}{}
 		}
 		// Check whether any of the channels in the relevant points-to set are
 		// buffered
@@ -72,14 +71,14 @@ func (C AnalysisCtxt) computeCommunicationLeaves(g defs.Goro, mem L.Memory, cl d
 		if addSuccs {
 			// TODO: We need to populate the ssa registers at receives with something here...
 			for succ := range cl.Successors() {
-				res[succ] = true
+				res[succ] = struct{}{}
 			}
 		}
-		return res, mops.Memory()
+		return res, state
 	}
 	getMuOpSuccs := func(v ssa.Value, i ssa.Instruction, funName string) (
-		res map[defs.CtrLoc]bool, newMem L.Memory) {
-		res = make(map[defs.CtrLoc]bool)
+		res map[defs.CtrLoc]struct{}, newMem L.AnalysisState) {
+		res = make(map[defs.CtrLoc]struct{})
 		ptSet := getPrimitives(v).FilterNil()
 
 		for _, c := range ptSet.Entries() {
@@ -99,20 +98,20 @@ func (C AnalysisCtxt) computeCommunicationLeaves(g defs.Goro, mem L.Memory, cl d
 						config.Type = cfg.SynthTypes.RWMU_RUNLOCK
 					}
 
-					ptSet := mops.GetUnsafe(l).PointerValue()
+					ptSet := state.GetUnsafe(l).PointerValue()
 					C.CheckPointsTo(ptSet)
 					for _, c := range ptSet.NonNilEntries() {
 						config.Loc = c
 
 						if config.Type == 0 {
-							res[cl.Successor()] = true
+							res[cl.Successor()] = struct{}{}
 							continue
 						}
 
 						muNode := cfg.CreateSynthetic(config)
 						muNode.AddPredecessor(cl.Node())
 
-						res[cl.Derive(muNode)] = true
+						res[cl.Derive(muNode)] = struct{}{}
 					}
 
 					continue
@@ -131,21 +130,21 @@ func (C AnalysisCtxt) computeCommunicationLeaves(g defs.Goro, mem L.Memory, cl d
 			}
 
 			if config.Type == 0 {
-				res[cl.Successor()] = true
+				res[cl.Successor()] = struct{}{}
 				continue
 			}
 
 			muNode := cfg.CreateSynthetic(config)
 			muNode.AddPredecessor(cl.Node())
 
-			res[cl.Derive(muNode)] = true
+			res[cl.Derive(muNode)] = struct{}{}
 		}
 
-		return res, mops.Memory()
+		return res, state
 	}
 	getCondSuccs := func(i ssa.CallInstruction, funName string) (
-		res map[defs.CtrLoc]bool, newMem L.Memory) {
-		res = make(map[defs.CtrLoc]bool)
+		res map[defs.CtrLoc]struct{}, newMem L.AnalysisState) {
+		res = make(map[defs.CtrLoc]struct{})
 		ptSet := getPrimitives(i.Common().Args[0])
 
 		for _, c := range ptSet.NonNilEntries() {
@@ -164,19 +163,19 @@ func (C AnalysisCtxt) computeCommunicationLeaves(g defs.Goro, mem L.Memory, cl d
 			}
 
 			if config.Type == 0 {
-				res[cl.CallRelationNode()] = true
+				res[cl.CallRelationNode()] = struct{}{}
 				continue
 			}
 
 			condOp := cfg.CreateSynthetic(config)
 			condOp.AddPredecessor(cl.Node())
-			res[cl.Derive(condOp)] = true
+			res[cl.Derive(condOp)] = struct{}{}
 		}
 
-		return res, mops.Memory()
+		return res, state
 	}
 
-	getCallSuccs := func(i ssa.CallInstruction) (res map[defs.CtrLoc]bool, mem L.Memory) {
+	getCallSuccs := func(i ssa.CallInstruction) (res map[defs.CtrLoc]struct{}, mem L.AnalysisState) {
 		if sc := i.Common().StaticCallee(); sc != nil {
 			if len(i.Common().Args) > 0 {
 				rcvr := i.Common().Args[0]
@@ -194,22 +193,22 @@ func (C AnalysisCtxt) computeCommunicationLeaves(g defs.Goro, mem L.Memory, cl d
 				return getMuOpSuccs(i.Common().Value, i, method.Name())
 			}
 		}
-		return map[defs.CtrLoc]bool{cl: true}, mops.Memory()
+		return map[defs.CtrLoc]struct{}{cl: {}}, state
 	}
 
 	C.Metrics.AddCommOp(cl)
 
 	switch n := cl.Node().(type) {
 	case *cfg.FunctionExit:
-		return map[defs.CtrLoc]bool{cl: true}, mops.Memory()
+		return map[defs.CtrLoc]struct{}{cl: {}}, state
 	case *cfg.TerminateGoro:
-		newMem = mops.Memory()
+		newState = state
 		return
 	case *cfg.PendingGo:
-		newMem = mops.Memory()
+		newState = state
 		return
 	case *cfg.Waiting:
-		res = make(map[defs.CtrLoc]bool)
+		res = make(map[defs.CtrLoc]struct{})
 
 		ptSet := getPrimitives(n.CallInstruction().Common().Args[0])
 
@@ -222,13 +221,13 @@ func (C AnalysisCtxt) computeCommunicationLeaves(g defs.Goro, mem L.Memory, cl d
 
 			waiting := cfg.CreateSynthetic(config)
 			waiting.AddPredecessor(n)
-			res[cl.Derive(waiting)] = true
+			res[cl.Derive(waiting)] = struct{}{}
 		}
 
-		newMem = mops.Memory()
+		newState = state
 		return
 	case *cfg.Waking:
-		res = make(map[defs.CtrLoc]bool)
+		res = make(map[defs.CtrLoc]struct{})
 
 		ptSet := getPrimitives(n.CallInstruction().Common().Args[0])
 
@@ -241,24 +240,24 @@ func (C AnalysisCtxt) computeCommunicationLeaves(g defs.Goro, mem L.Memory, cl d
 
 			waking := cfg.CreateSynthetic(config)
 			waking.AddPredecessor(n)
-			res[cl.Derive(waking)] = true
+			res[cl.Derive(waking)] = struct{}{}
 		}
 
-		return res, mops.Memory()
+		return res, state
 	case *cfg.APIConcBuiltinCall:
-		res, newMem = getCallSuccs(n.Call)
+		res, newState = getCallSuccs(n.Call)
 		if res != nil {
 			return
 		}
 	case *cfg.SSANode:
 		switch i := n.Instruction().(type) {
 		case *ssa.If:
-			return map[defs.CtrLoc]bool{cl: true}, mops.Memory()
+			return map[defs.CtrLoc]struct{}{cl: {}}, state
 		case *ssa.Defer:
 			// SSA defer calls should not be a communication node.
 			// Them being found indicates a bug.
 		case *ssa.Call:
-			res, newMem = getCallSuccs(i)
+			res, newState = getCallSuccs(i)
 			if res != nil {
 				return
 			}
@@ -271,23 +270,23 @@ func (C AnalysisCtxt) computeCommunicationLeaves(g defs.Goro, mem L.Memory, cl d
 		}
 	// If a concurrency operation was deferred, it will be captured at this point.
 	case *cfg.DeferCall:
-		res, newMem = getCallSuccs(n.DeferLink().SSANode().Instruction().(ssa.CallInstruction))
+		res, newState = getCallSuccs(n.DeferLink().SSANode().Instruction().(ssa.CallInstruction))
 		if res != nil {
 			return
 		}
 	case *cfg.Select:
-		return map[defs.CtrLoc]bool{cl: true}, mops.Memory()
+		return map[defs.CtrLoc]struct{}{cl: {}}, state
 	case *cfg.SelectRcv:
 		return getCommSuccs(n.Channel(), cfg.SynthTypes.COMM_RCV)
 	case *cfg.SelectSend:
 		return getCommSuccs(n.Channel(), cfg.SynthTypes.COMM_SEND)
 	case *cfg.SelectDefault:
-		return map[defs.CtrLoc]bool{cl: true}, mops.Memory()
+		return map[defs.CtrLoc]struct{}{cl: {}}, state
 	case *cfg.BuiltinCall:
 		if n.Builtin().Name() == "close" {
 			// Make sure wildcards get swapped:
 			getPrimitives(n.Arg(0))
-			return map[defs.CtrLoc]bool{cl: true}, mops.Memory()
+			return map[defs.CtrLoc]struct{}{cl: {}}, state
 		}
 	}
 	log.Fatal("Should be unreachable. Attempted getting synchronization successor of non-communication node", cl)

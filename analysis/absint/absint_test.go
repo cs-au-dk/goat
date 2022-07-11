@@ -50,10 +50,10 @@ func TestAbstractInterpretation(t *testing.T) {
 	injectUBool := func(ctxt *AnalysisCtxt) {
 		if glob := ctxt.InitConf.Target.CtrLoc().Root().Package().Var("ubool"); glob != nil {
 			state := ctxt.InitState
-			ctxt.InitState = state.UpdateMemory(state.Memory().Update(
+			ctxt.InitState = state.Update(
 				loc.GlobalLocation{Site: glob},
 				Elements().AbstractBasic(false).ToTop(),
-			))
+			)
 		}
 	}
 
@@ -72,15 +72,15 @@ func TestAbstractInterpretation(t *testing.T) {
 
 	// Don't know if this is smart...
 	testFactoryWMem := func(
-		makeTest func(*testing.T, defs.Goro, L.Memory) (
-			L.Memory,
-			func(L.Memory, L.AbstractValue),
+		makeTest func(*testing.T, defs.Goro, L.AnalysisState) (
+			L.AnalysisState,
+			func(L.AnalysisState, L.AbstractValue),
 		),
 	) absIntTestFunc {
 		return func(t *testing.T, ctxt AnalysisCtxt) {
 			g := ctxt.InitConf.Target
-			mem, testFunc := makeTest(t, g, ctxt.InitState.Memory())
-			ctxt.InitState = ctxt.InitState.UpdateMemory(mem)
+			state, testFunc := makeTest(t, g, ctxt.InitState)
+			ctxt.InitState = state
 			injectUBool(&ctxt)
 
 			succs := ctxt.InitConf.GetTransitions(ctxt, ctxt.InitState)
@@ -104,38 +104,38 @@ func TestAbstractInterpretation(t *testing.T) {
 
 				state := succ.State
 				retLoc := loc.ReturnLocation(g, g.CtrLoc().Root())
-				retVal, found := state.Memory().Get(retLoc)
+				retVal, found := state.Get(retLoc)
 				if !found {
 					t.Fatal("No value set at return location?")
 				}
 
-				testFunc(state.Memory(), retVal)
+				testFunc(state, retVal)
 			}
 		}
 	}
 
 	testFactory := func(
-		makeTest func(*testing.T, defs.Goro, L.Memory) (
-			L.Memory,
+		makeTest func(*testing.T, defs.Goro, L.AnalysisState) (
+			L.AnalysisState,
 			func(L.AbstractValue),
 		),
 	) absIntTestFunc {
-		return testFactoryWMem(func(t *testing.T, g defs.Goro, mem L.Memory) (
-			L.Memory,
-			func(L.Memory, L.AbstractValue),
+		return testFactoryWMem(func(t *testing.T, g defs.Goro, mem L.AnalysisState) (
+			L.AnalysisState,
+			func(L.AnalysisState, L.AbstractValue),
 		) {
 			updMem, tFun := makeTest(t, g, mem)
-			return updMem, func(_ L.Memory, retVal L.AbstractValue) {
+			return updMem, func(_ L.AnalysisState, retVal L.AbstractValue) {
 				tFun(retVal)
 			}
 		})
 	}
 
-	paramEqualsReturnValue := testFactory(func(t *testing.T, entry defs.Goro, mem L.Memory) (
-		L.Memory,
+	paramEqualsReturnValue := testFactory(func(t *testing.T, entry defs.Goro, state L.AnalysisState) (
+		L.AnalysisState,
 		func(L.AbstractValue),
 	) {
-		mem = mem.Update(
+		state = state.Update(
 			chLoc,
 			makeChannelValue(
 				Lattices().FlatInt().Top().Flat(),
@@ -147,9 +147,9 @@ func TestAbstractInterpretation(t *testing.T) {
 		f := entry.CtrLoc().Root()
 		globLoc := loc.GlobalLocation{Site: f.Package().Var("ch")}
 		paramVal := Elements().AbstractPointerV(chLoc)
-		mem = mem.Update(globLoc, paramVal)
+		state = state.Update(globLoc, paramVal)
 
-		return mem, func(retVal L.AbstractValue) {
+		return state, func(retVal L.AbstractValue) {
 			if !retVal.Eq(paramVal) {
 				t.Errorf("Expected %v to equal %v\n", retVal, paramVal)
 			}
@@ -157,13 +157,11 @@ func TestAbstractInterpretation(t *testing.T) {
 	})
 
 	simpleChannelTest := func(expectSingleton, expectNil bool) absIntTestFunc {
-		return testFactoryWMem(func(t *testing.T, entry defs.Goro, mem L.Memory) (
-			L.Memory,
-			func(L.Memory, L.AbstractValue),
+		return testFactoryWMem(func(t *testing.T, entry defs.Goro, mem L.AnalysisState) (
+			L.AnalysisState,
+			func(L.AnalysisState, L.AbstractValue),
 		) {
-			return mem, func(mem_ L.Memory, val L.AbstractValue) {
-				mem := L.MemOps(mem_)
-
+			return mem, func(state L.AnalysisState, val L.AbstractValue) {
 				expectedSize := 1
 				if expectNil {
 					expectedSize += 1
@@ -182,13 +180,13 @@ func TestAbstractInterpretation(t *testing.T) {
 
 				ptsto = ptsto.Remove(loc.NilLocation{})
 
-				if strongOk := mem.CanStrongUpdate(ptsto); expectSingleton != strongOk {
-					t.Log(mem.Memory(), ptsto)
+				if strongOk := L.MemOps(state.Heap()).CanStrongUpdate(ptsto); expectSingleton != strongOk {
+					t.Log(state.Heap(), ptsto)
 					t.Error("Expected singleton:", expectSingleton, "but was actually:", strongOk)
 				}
 
 				allocSite := ptsto.Entries()[0]
-				chVal, found := mem.Get(allocSite)
+				chVal, found := state.Get(allocSite)
 				if !found {
 					t.Fatal("Memory did not contain a value for", allocSite)
 				}
@@ -216,7 +214,7 @@ func TestAbstractInterpretation(t *testing.T) {
 		})
 	}
 
-	arrTopTest := testFactory(func(t *testing.T, _ defs.Goro, mem L.Memory) (L.Memory, func(L.AbstractValue)) {
+	arrTopTest := testFactory(func(t *testing.T, _ defs.Goro, mem L.AnalysisState) (L.AnalysisState, func(L.AbstractValue)) {
 		return mem, func(val L.AbstractValue) {
 			if val.IsStruct() {
 				// Unwrap array
@@ -253,7 +251,7 @@ func TestAbstractInterpretation(t *testing.T) {
 
 	// Tests that the return value is greater than or equal to the provided value
 	rvalGeq := func(v L.AbstractValue) absIntTestFunc {
-		return testFactory(func(t *testing.T, _ defs.Goro, mem L.Memory) (L.Memory, func(L.AbstractValue)) {
+		return testFactory(func(t *testing.T, _ defs.Goro, mem L.AnalysisState) (L.AnalysisState, func(L.AbstractValue)) {
 			return mem, func(rval L.AbstractValue) {
 				if !rval.Geq(v) {
 					t.Errorf("Expected %v ⊒ %v", rval, v)
@@ -263,7 +261,7 @@ func TestAbstractInterpretation(t *testing.T) {
 	}
 
 	rvalEq := func(v L.AbstractValue) absIntTestFunc {
-		return testFactory(func(t *testing.T, _ defs.Goro, mem L.Memory) (L.Memory, func(L.AbstractValue)) {
+		return testFactory(func(t *testing.T, _ defs.Goro, mem L.AnalysisState) (L.AnalysisState, func(L.AbstractValue)) {
 			return mem, func(rval L.AbstractValue) {
 				if !rval.Eq(v) {
 					t.Errorf("Expected %v == %v", rval, v)
@@ -703,7 +701,7 @@ func TestAbstractInterpretation(t *testing.T) {
 				}
 				return i, v
 			}`,
-			testFactory(func(t *testing.T, _ defs.Goro, mem L.Memory) (L.Memory, func(L.AbstractValue)) {
+			testFactory(func(t *testing.T, _ defs.Goro, mem L.AnalysisState) (L.AnalysisState, func(L.AbstractValue)) {
 				return mem, func(rval L.AbstractValue) {
 					if !rval.IsStruct() {
 						t.Fatal("Expected", rval, "to be a struct")
@@ -729,7 +727,7 @@ func TestAbstractInterpretation(t *testing.T) {
 				v, ok := mp[1]
 				return v, ok
 			}`,
-			testFactory(func(t *testing.T, _ defs.Goro, mem L.Memory) (L.Memory, func(L.AbstractValue)) {
+			testFactory(func(t *testing.T, _ defs.Goro, mem L.AnalysisState) (L.AnalysisState, func(L.AbstractValue)) {
 				return mem, func(rval L.AbstractValue) {
 					if !rval.IsStruct() {
 						t.Fatal("Expected", rval, "to be a struct")
@@ -762,7 +760,7 @@ func TestAbstractInterpretation(t *testing.T) {
 
 				return key
 			}`,
-			testFactory(func(t *testing.T, _ defs.Goro, mem L.Memory) (L.Memory, func(L.AbstractValue)) {
+			testFactory(func(t *testing.T, _ defs.Goro, mem L.AnalysisState) (L.AnalysisState, func(L.AbstractValue)) {
 				return mem, func(rval L.AbstractValue) {
 					if !rval.IsPointer() {
 						t.Fatal("Expected", rval, "to be a points-to set")
@@ -843,7 +841,7 @@ func TestAbstractInterpretation(t *testing.T) {
 
 				return i
 			}`,
-			testFactory(func(t *testing.T, _ defs.Goro, mem L.Memory) (L.Memory, func(L.AbstractValue)) {
+			testFactory(func(t *testing.T, _ defs.Goro, mem L.AnalysisState) (L.AnalysisState, func(L.AbstractValue)) {
 				return mem, func(rval L.AbstractValue) {
 					if !rval.IsPointer() {
 						t.Fatal("Expected", rval, "to be pointer")
@@ -967,8 +965,7 @@ func TestAbstractInterpretation(t *testing.T) {
 				glob := loc.GlobalLocation{Site: tid.CtrLoc().Node().Function().Pkg.Var("x")}
 
 				for _, succ := range succs {
-					mem := succ.State.Memory()
-					xval, found := mem.Get(glob)
+					xval, found := succ.State.Get(glob)
 					if !found {
 						t.Fatal("Missing value for", glob)
 					}
@@ -1226,7 +1223,7 @@ func TestAbstractInterpretation(t *testing.T) {
 				var a []int
 				return &a[0]
 			}`,
-			testFactory(func(t *testing.T, _ defs.Goro, mem L.Memory) (L.Memory, func(L.AbstractValue)) {
+			testFactory(func(t *testing.T, _ defs.Goro, mem L.AnalysisState) (L.AnalysisState, func(L.AbstractValue)) {
 				return mem, func(rval L.AbstractValue) {
 					typ := rval.PointsTo().Entries()[0].Type()
 					if typ.String() != "*int" {
@@ -1768,13 +1765,13 @@ func TestAbstractInterpretation(t *testing.T) {
 				runtime.Goexit()
 				exitAfterGoExit = 2
 			}`,
-			testFactoryWMem(func(t *testing.T, g defs.Goro, mem L.Memory) (
-				L.Memory, func(L.Memory, L.AbstractValue)) {
-				return mem, func(mem L.Memory, _ L.AbstractValue) {
+			testFactoryWMem(func(t *testing.T, g defs.Goro, state L.AnalysisState) (
+				L.AnalysisState, func(L.AnalysisState, L.AbstractValue)) {
+				return state, func(state L.AnalysisState, _ L.AbstractValue) {
 					pkg := g.CtrLoc().Root().Pkg
 					for name, member := range pkg.Members {
 						if global, ok := member.(*ssa.Global); ok && !strings.ContainsRune(name, '$') {
-							val := mem.GetUnsafe(loc.GlobalLocation{Site: global})
+							val := state.GetUnsafe(loc.GlobalLocation{Site: global})
 							if !val.IsBasic() {
 								t.Errorf("Expected %s:%v to be basic", name, val)
 							} else if bval := val.BasicValue(); bval.IsBot() || bval.IsTop() {

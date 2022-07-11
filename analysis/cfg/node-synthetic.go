@@ -1007,7 +1007,10 @@ func (n *FunctionEntry) Pos() token.Pos {
 }
 
 func (n *FunctionExit) Pos() token.Pos {
-	return n.fun.Syntax().End()
+	if n.fun != nil && n.fun.Syntax() != nil {
+		return n.fun.Syntax().End()
+	}
+	return token.NoPos
 }
 
 func (n *TerminateGoro) Pos() token.Pos {

@@ -29,7 +29,8 @@ func FromCallGraph(cg *callgraph.Graph, prune bool) Graph[*ssa.Function] {
 		dedup := map[*ssa.Function]bool{}
 		for _, edge := range cg.Nodes[fun].Out {
 			if seen := dedup[edge.Callee.Func]; !seen &&
-				(!prune || siteCnt[edge.Site] < 10) {
+				(!prune) {
+				// || siteCnt[edge.Site] < 10) {
 				dedup[edge.Callee.Func] = true
 				ret = append(ret, edge.Callee.Func)
 			}
