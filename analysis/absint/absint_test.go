@@ -81,35 +81,34 @@ func TestAbstractInterpretation(t *testing.T) {
 			g := ctxt.InitConf.Target
 			mem, testFunc := makeTest(t, g, ctxt.InitState.Memory())
 			ctxt.InitState = ctxt.InitState.UpdateMemory(mem)
+			state := ctxt.InitState
 			injectUBool(&ctxt)
 
-			succs := ctxt.InitConf.GetTransitions(ctxt, ctxt.InitState)
-			// Filter out panicked successors
-			for key, succ := range succs {
-				if succ.Configuration().IsPanicked() {
-					// TODO: Let caller control whether panicking is allowed?
-					delete(succs, key)
-				}
-			}
+			graph, A := StaticAnalysis(ctxt)
 
-			if len(succs) != 1 {
-				t.Fatal("Not exactly one possible successor?", succs)
-			}
-
-			for _, succ := range succs {
-				cl := succ.Configuration().Threads().GetUnsafe(g)
-				if _, ok := cl.Node().(*cfg.TerminateGoro); !ok {
-					t.Fatal("The main thread did not reach its exit:", cl)
+			foundTerm := false
+			graph.ForEach(func(ac *AbsConfiguration) {
+				if ac.IsPanicked() {
+					return
 				}
 
-				state := succ.State
-				retLoc := loc.ReturnLocation(g, g.CtrLoc().Root())
-				retVal, found := state.Memory().Get(retLoc)
-				if !found {
-					t.Fatal("No value set at return location?")
-				}
+				if _, ok := ac.Threads().GetUnsafe(g).Node().(*cfg.TerminateGoro); ok {
+					foundTerm = true
 
-				testFunc(state.Memory(), retVal)
+					state = A.GetUnsafe(ac.superloc)
+
+					retLoc := loc.ReturnLocation(g, g.CtrLoc().Root())
+					retVal, found := state.Memory().Get(retLoc)
+					if !found {
+						t.Fatal("No value set at return location?")
+					}
+
+					testFunc(state.Memory(), retVal)
+				}
+			})
+
+			if !foundTerm {
+				t.Fatal("The main thread did not reach its exit node")
 			}
 		}
 	}
