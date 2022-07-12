@@ -103,19 +103,19 @@ func (C AnalysisCtxt) stdCall(
 
 		// Use different channel abstract values based on whether we are creating a Timer or a Ticker.
 		var chVal L.AbstractValue
-		if namedTimerType.Obj().Name() == "Ticker" {
+
+		switch namedTimerType.Obj().Name() {
+		case "Ticker":
 			// Closing the channel is not sound, but it is an easy way to allow infinite messages.
 			chVal = makeChannelValue(
 				Elements().Constant(0),
 				false,
-				0,
-			)
-		} else {
+				0)
+		default:
 			chVal = makeChannelValue(
 				Elements().Constant(1),
 				true,
-				1,
-			)
+				1)
 		}
 
 		for i := 0; i < timerType.NumFields(); i++ {
@@ -151,7 +151,7 @@ func (C AnalysisCtxt) stdCall(
 
 		hops := L.MemOps(heap)
 		ptr := hops.HeapAlloc(allocSite, timerVal)
-		newState := state.UpdateHeap(hops.Memory().Update(callLoc, ptr))
+		newState := state.UpdateHeap(hops.Memory()).Update(callLoc, ptr)
 		return updMem(newState)
 	}
 
@@ -202,7 +202,7 @@ func (C AnalysisCtxt) stdCall(
 			lockVal := evalSSA(call.Common().Args[0])
 			hops := L.MemOps(heap)
 			ptr := hops.HeapAlloc(allocSite, lockVal)
-			return updMem(state.UpdateHeap(hops.Memory().Update(callLoc, ptr)))
+			return updMem(state.UpdateHeap(hops.Memory()).Update(callLoc, ptr))
 		}
 	case "os/signal.Notify":
 		// Set channel passed to Notify as a top channel.
@@ -255,9 +255,10 @@ func (C AnalysisCtxt) stdCall(
 		"(*testing.common).SkipNow",
 		"(*testing.common).Skip",
 		"(*testing.common).Skipf":
+		postCl := cl.CallRelationNode().WithExiting(true)
 		return Elements().AnalysisIntraprocess().Update(
 			// Set the exiting flag to true
-			cl.CallRelationNode().WithExiting(true), state,
+			postCl, state.AddCharges(g, L.Charge{postCl, stack.GetUnsafe(g)}),
 		), true
 	}
 

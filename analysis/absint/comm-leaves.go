@@ -181,7 +181,8 @@ func (C AnalysisCtxt) computeCommunicationLeaves(g defs.Goro, state L.AnalysisSt
 				rcvr := i.Common().Args[0]
 				switch {
 				case utils.IsNamedType(rcvr.Type(), "sync", "Mutex") ||
-					utils.IsNamedType(rcvr.Type(), "sync", "RWMutex"):
+					utils.IsNamedType(rcvr.Type(), "sync", "RWMutex") &&
+						sc.Name() != "RLocker":
 					return getMuOpSuccs(rcvr, i, sc.Name())
 				case utils.IsNamedType(rcvr.Type(), "sync", "Cond"):
 					return getCondSuccs(i, sc.Name())

@@ -113,9 +113,14 @@ func (c *AnalysisStateLattice) AnalysisState() *AnalysisStateLattice {
 	return c
 }
 
-func (s AnalysisState) AddCharges(tid defs.Goro, locs ...defs.CtrLoc) AnalysisState {
+type Charge = struct {
+	defs.CtrLoc
+	Memory
+}
+
+func (s AnalysisState) AddCharges(tid defs.Goro, charges ...Charge) AnalysisState {
 	return s.UpdateThreadCharges(
-		s.ThreadCharges().WeakUpdate(tid, elFact.Charges(locs...)),
+		s.ThreadCharges().WeakUpdate(tid, elFact.Charges(charges...)),
 	)
 }
 

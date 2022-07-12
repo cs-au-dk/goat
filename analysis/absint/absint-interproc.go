@@ -182,7 +182,7 @@ func (C AnalysisCtxt) callSuccs(
 		}
 
 		// Add a charge for the post call site
-		state = state.AddCharges(g, cl.Derive(postCall))
+		state = state.AddCharges(g, L.Charge{cl.Derive(postCall), state.Stack().GetUnsafe(g)})
 	}
 
 	paramTransfers, mayPanic := C.transferParams(*callIns.Common(), g, g, state)
@@ -277,11 +277,10 @@ func (C AnalysisCtxt) transferParams(
 		// go println(i)
 		// This needs to be handled differently.
 		// We transfer ssa register values from the first to the second goroutine.
-		newMem := state
 		for _, arg := range call.Args {
 			// Skip constants, they don't need to be transferred (and they don't have a location)
 			if _, ok := arg.(*ssa.Const); !ok {
-				newMem = newMem.Update(
+				state = state.Update(
 					loc.LocationFromSSAValue(toG, arg),
 					evaluateSSA(fromG, state.Stack(), arg),
 				)
@@ -289,7 +288,7 @@ func (C AnalysisCtxt) transferParams(
 		}
 
 		// A bit hacky
-		res[nil] = newMem
+		res[nil] = state
 		return
 	}
 
@@ -374,7 +373,7 @@ func (C AnalysisCtxt) transferParams(
 	}
 
 	for fun, target := range targets {
-		newMem := state
+		newMem := state.UpdateThreadStack(toG, L.Consts().FreshMemory())
 		for i, argv := range target.args {
 			newMem = newMem.Update(
 				loc.LocationFromSSAValue(toG, fun.Params[i]),

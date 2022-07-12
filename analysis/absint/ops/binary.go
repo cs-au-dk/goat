@@ -11,7 +11,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-func BinOp(mem L.Memory, v1, v2 L.AbstractValue, ssaVal *ssa.BinOp) (result L.AbstractValue) {
+func BinOp(state L.AnalysisState, v1, v2 L.AbstractValue, ssaVal *ssa.BinOp) (result L.AbstractValue) {
 	// Special handling for == and != operators on non-basic types
 	switch ssaVal.Op {
 	case token.EQL:
@@ -36,12 +36,12 @@ func BinOp(mem L.Memory, v1, v2 L.AbstractValue, ssaVal *ssa.BinOp) (result L.Ab
 			case *types.Slice:
 				comparePointers = true
 			case *types.Interface:
-				return itfBinOp(mem, v1.PointerValue(), v2.PointerValue(), ssaVal)
+				return itfBinOp(state, v1.PointerValue(), v2.PointerValue(), ssaVal)
 			}
 
 			// Arrays and structs require different handling
 			if comparePointers {
-				return ptrBinOp(mem, v1.PointerValue(), v2.PointerValue(), ssaVal.Op)
+				return ptrBinOp(state.Heap(), v1.PointerValue(), v2.PointerValue(), ssaVal.Op)
 			}
 		}
 	}
@@ -267,7 +267,7 @@ func ptrBinOp(mem L.Memory, v1, v2 L.PointsTo, op token.Token) L.AbstractValue {
 	return flipEqual(equal, op)
 }
 
-func itfBinOp(mem L.Memory, v1, v2 L.PointsTo, binop *ssa.BinOp) L.AbstractValue {
+func itfBinOp(state L.AnalysisState, v1, v2 L.PointsTo, binop *ssa.BinOp) L.AbstractValue {
 	// Interface equality specification:
 	// Two interface values are equal if they have identical dynamic types and
 	// equal dynamic values or if both have value nil.
@@ -299,7 +299,6 @@ func itfBinOp(mem L.Memory, v1, v2 L.PointsTo, binop *ssa.BinOp) L.AbstractValue
 		}
 
 		e1, e2 := v1.Entries(), v2.Entries()
-		mops := L.MemOps(mem)
 		for _, l1 := range e1 {
 			s1 := getMkItf(l1)
 			for _, l2 := range e2 {
@@ -315,7 +314,7 @@ func itfBinOp(mem L.Memory, v1, v2 L.PointsTo, binop *ssa.BinOp) L.AbstractValue
 						fakeBinop.X, fakeBinop.Y, fakeBinop.Op = a1, a2, token.EQL
 						equal = equal.MonoJoin(
 							// Delegate to BinOp for underlying types
-							BinOp(mem, mops.GetUnsafe(l1), mops.GetUnsafe(l2), &fakeBinop),
+							BinOp(state, state.GetUnsafe(l1), state.GetUnsafe(l2), &fakeBinop),
 						)
 					} else {
 						equal = equal.MonoJoin(FALSE)

@@ -4,9 +4,9 @@ import (
 	"Goat/analysis/defs"
 )
 
-//go:generate go run generate-map.go Charges defs.CtrLoc twoElementLatticeElement
+//go:generate go run generate-map.go Charges defs.CtrLoc Memory
 
-var chargesLattice = &ChargesLattice{mapLatticeBase{rng: twoElementLattice}}
+var chargesLattice = &ChargesLattice{mapLatticeBase{rng: memoryLattice}}
 
 func (latticeFactory) ChargesIntra() *ChargesLattice {
 	return chargesLattice
@@ -25,14 +25,10 @@ func (m *ChargesLattice) String() string {
 	return colorize.Lattice("Charges")
 }
 
-func (elementFactory) Charges(locs ...defs.CtrLoc) Charges {
+func (elementFactory) Charges(chgs ...Charge) Charges {
 	ch := chargesLattice.Bot().Charges()
-	for _, loc := range locs {
-		ch = ch.Add(loc)
+	for _, cg := range chgs {
+		ch = ch.Update(cg.CtrLoc, cg.Memory)
 	}
 	return ch
-}
-
-func (ch Charges) Add(node defs.CtrLoc) Charges {
-	return ch.Update(node, true)
 }

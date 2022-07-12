@@ -328,6 +328,8 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 
 			cfg.PrintNodePosition(cl.Node(), C.LoadRes.Cfg.FileSet())
 
+			fmt.Println(state)
+
 			if opts.Visualize() {
 				cfg.VisualizeFunction(cl.Node().Function())
 			}
@@ -443,11 +445,13 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 		noop()
 	case *cfg.PostCall:
 		if cl.Exiting() {
+			stack := state.ThreadCharges().GetUnsafe(g).GetUnsafe(cl)
 			// If the exiting flag is set we should immediately begin processing deferred calls.
 			// We set the return value to bottom to avoid crashes when looking it up.
+			stack = stack.Update(loc.ReturnLocation(g, n.Function()), L.Consts().BotValue())
 			succs = succs.Update(
 				cl.Derive(n.PanicCont()),
-				state.Update(loc.ReturnLocation(g, n.Function()), L.Consts().BotValue()),
+				state.UpdateThreadStack(g, stack),
 			)
 		} else {
 			noop()
@@ -583,7 +587,10 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 			if dfr := n.DeferLink(); dfr != nil {
 				// Charge deferlink in both exiting and non-exiting states
 				ncl := cl.Derive(dfr)
-				newState = state.AddCharges(g, ncl.WithExiting(false), ncl.WithExiting(true))
+				stack := stack.GetUnsafe(g)
+				newState = state.AddCharges(g,
+					L.Charge{ncl.WithExiting(false), stack},
+					L.Charge{ncl.WithExiting(true), stack})
 			}
 
 			succs = succs.Update(cl.Successor(), newState)
@@ -657,7 +664,7 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 				// No wildcard swap because it is unlikely to improve precision.
 				// (Which can only happen if the wildcard represents 0 allocation sites).
 				x, y := evalSSA(val.X), evalSSA(val.Y)
-				res = A.BinOp(stack.GetUnsafe(g), x, y, val)
+				res = A.BinOp(state, x, y, val)
 
 				/*
 					Special case loops guards for loops over slices to avoid false positives

@@ -174,7 +174,7 @@ func ChannelValueQueryTests(
 						return
 					}
 
-					mem := as.Memory()
+					mem := as.Heap()
 					errStr := func(al location.AllocationSiteLocation, val L.Element) string {
 						return fmt.Sprintf("Expected `%s` field of channel %s to be: %s\n"+
 							"Instead found: %s\n"+

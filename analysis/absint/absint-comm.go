@@ -143,8 +143,6 @@ func (s *AbsConfiguration) GetCommSuccessors(
 				anyFound := false
 				// Only propagate control to charged successors.
 				charged, _ := state.ThreadCharges().Get(g1)
-				//callDAG := C.LoadRes.CallDAG
-				retStack := L.Consts().FreshMemory()
 
 				/* TODO
 					 Abstract GC is disabled because `canGC` is expensive and because
@@ -165,12 +163,12 @@ func (s *AbsConfiguration) GetCommSuccessors(
 					if sNode, isEntry := succ.Node().(*cfg.FunctionEntry); isEntry &&
 						n1.Function().Name() == "init" && sNode.Function().Name() == "main" {
 						anyFound = true
-						S.succUpdate(tIn1(succ), state.UpdateThreadStack(g1, retStack))
+						S.succUpdate(tIn1(succ), state.UpdateThreadStack(g1, L.Consts().FreshMemory()))
 					} else {
 						for _, succExiting := range [...]bool{false, true} {
 							// Check if a charged successor exists with either value of the exiting flag
 							succ := succ.WithExiting(succExiting)
-							if _, found := charged.Get(succ); found {
+							if retStack, found := charged.Get(succ); found {
 								anyFound = true
 
 								// If the call instruction is a normal call (not defer), we need
@@ -214,6 +212,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 								// it no matter the value of the flag in the charged CtrLoc.
 								if !succExiting && c1.Exiting() {
 									succ = succ.WithExiting(true)
+									state = state.AddCharges(g1, L.Charge{succ, retStack})
 								}
 
 								S.succUpdate(tIn1(succ), state.UpdateThreadStack(g1, retStack))

@@ -36,9 +36,32 @@ type absIntTest struct {
 
 type spoofedGoro struct{}
 
-func (spoofedGoro) String() string      { return "spoofed-goroutine" }
-func (spoofedGoro) Hash() uint32        { return 42 }
-func (spoofedGoro) CtrLoc() defs.CtrLoc { panic("") }
+func (spoofedGoro) String() string              { return "spoofed-goroutine" }
+func (spoofedGoro) Hash() uint32                { return 42 }
+func (spoofedGoro) CtrLoc() defs.CtrLoc         { return defs.CtrLoc{} }
+func (spoofedGoro) GetRadix() defs.Goro         { panic("Called .GetRadix on spoofed Goroutine") }
+func (spoofedGoro) Index() int                  { panic("Called .Index on spoofed Goroutine") }
+func (spoofedGoro) IsChildOf(defs.Goro) bool    { panic("Called .IsChildOf on spoofed Goroutine") }
+func (spoofedGoro) IsCircular() bool            { panic("Called .IsCircular on spoofed Goroutine") }
+func (spoofedGoro) IsParentOf(defs.Goro) bool   { panic("Called .IsParentOf on spoofed Goroutine") }
+func (spoofedGoro) IsRoot() bool                { panic("Called .IsRoot on spoofed Goroutine") }
+func (spoofedGoro) Length() int                 { panic("Called .Length on spoofed Goroutine") }
+func (spoofedGoro) Parent() defs.Goro           { return nil }
+func (spoofedGoro) Root() defs.Goro             { panic("Called .Root on spoofed Goroutine") }
+func (spoofedGoro) SetIndex(int) defs.Goro      { panic("Called .SetIndex on spoofed Goroutine") }
+func (spoofedGoro) Spawn(defs.CtrLoc) defs.Goro { panic("Called .Spawn on spoofed Goroutine") }
+func (spoofedGoro) SpawnIndexed(defs.CtrLoc, int) defs.Goro {
+	panic("Called .SpawnIndexed on spoofed Goroutine")
+}
+func (spoofedGoro) WeakEqual(defs.Goro) bool {
+	panic("Called .WeakEqual on spoofed Goroutine")
+}
+func (spoofedGoro) Equal(g defs.Goro) bool {
+	_, ok := g.(spoofedGoro)
+	return ok
+}
+
+var a defs.Goro = spoofedGoro{}
 
 func TestAbstractInterpretation(t *testing.T) {
 	chLoc := loc.LocalLocation{
@@ -84,33 +107,31 @@ func TestAbstractInterpretation(t *testing.T) {
 			ctxt.InitState = state
 			injectUBool(&ctxt)
 
-			succs := ctxt.InitConf.GetTransitions(ctxt, ctxt.InitState)
-			// Filter out panicked successors
-			for key, succ := range succs {
-				if succ.Configuration().IsPanicked() {
-					// TODO: Let caller control whether panicking is allowed?
-					delete(succs, key)
-				}
-			}
+			graph, A := StaticAnalysis(ctxt)
 
-			if len(succs) != 1 {
-				t.Fatal("Not exactly one possible successor?", succs)
-			}
-
-			for _, succ := range succs {
-				cl := succ.Configuration().Threads().GetUnsafe(g)
-				if _, ok := cl.Node().(*cfg.TerminateGoro); !ok {
-					t.Fatal("The main thread did not reach its exit:", cl)
+			foundTerm := false
+			graph.ForEach(func(ac *AbsConfiguration) {
+				if ac.IsPanicked() {
+					return
 				}
 
-				state := succ.State
-				retLoc := loc.ReturnLocation(g, g.CtrLoc().Root())
-				retVal, found := state.Get(retLoc)
-				if !found {
-					t.Fatal("No value set at return location?")
-				}
+				if _, ok := ac.Threads().GetUnsafe(g).Node().(*cfg.TerminateGoro); ok {
+					foundTerm = true
 
-				testFunc(state, retVal)
+					state = A.GetUnsafe(ac.superloc)
+
+					retLoc := loc.ReturnLocation(g, g.CtrLoc().Root())
+					retVal, found := state.Get(retLoc)
+					if !found {
+						t.Fatal("No value set at return location?")
+					}
+
+					testFunc(state, retVal)
+				}
+			})
+
+			if !foundTerm {
+				t.Fatal("The main thread did not reach its exit node")
 			}
 		}
 	}
