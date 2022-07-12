@@ -434,6 +434,8 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 
 	C.LogCtrLocMemory(g, cl, initMem)
 	switch n := cl.Node().(type) {
+	case *cfg.SelectDefer:
+		noop()
 	case *cfg.FunctionEntry:
 		noop()
 	case *cfg.PostCall:
