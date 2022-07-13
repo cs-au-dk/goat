@@ -42,3 +42,7 @@ Visualization
 /benchmarks/pdfs
 
 __pycache__
+
+# PProf generated files
+/*.prof
+/*.svg
