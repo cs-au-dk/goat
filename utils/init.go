@@ -302,11 +302,11 @@ func init() {
 	flag.UintVar(&(opts.minlen), "minlen", 2, "Minimum edge length (for wider output).")
 	flag.Float64Var(&(opts.nodesep), "nodesep", 0.35, "Minimum space between two adjacent nodes in the same rank (for taller output).")
 	flag.IntVar(&(opts.pseti), "pset", -1, "Index of Pset to analyze.")
-	flag.StringVar(&(opts.function), "fun", "main", "target a specific function w. r. t. the given task.\n"+
-		"- Function names need not be fully qualified w.r.t. package name. If a simple name is provided, "+
+	flag.StringVar(&(opts.function), "fun", "main", "target a specific function wrt. the given task.\n"+
+		"- Function names need not be fully qualified wrt. package name. If a simple name is provided, "+
 		"the framework will search for a function matching that name in the main package. If one is not found, "+
 		"it will proceed to do a search across all packages. Will return the first function matching that name.\n"+
-		"- Use '.' to perform targetted analysis on all functions in the main package.\n")
+		"- Use '.' to perform targeted analysis on all functions in the main package.\n")
 	flag.StringVar(&(opts.outputFormat), "format", "svg", "output file format [svg | png | jpg | ...]")
 	flag.StringVar(&(opts.gopath), "gopath", "examples", "specify GOPATH to be used for packages.Load")
 	flag.StringVar(&(opts.modulePath), "modulepath", "", `specify a path to a directory containing a Go module.
@@ -317,7 +317,7 @@ in "module-aware" mode (GO111MODULE=on).`)
 	flag.BoolVar(&(opts.logai), "ai-logging", false, "Enable logging of specific events during abstract interpretation")
 	flag.BoolVar(&(opts.metrics), "metrics", false, "Enable collection of performance metrics for abstract interpretation")
 	flag.BoolVar(&(opts.noColorize), "no-colorize", false, "Disable pretty printer colorization")
-	flag.BoolVar(&(opts.extended), "extended", false, "Include additional information, e. g. channel buffer size and closing.")
+	flag.BoolVar(&(opts.extended), "extended", false, "Include additional information, e.g. channel buffer size and closing.")
 	flag.BoolVar(&(opts.verbose), "verbose", false, "enable verbose output")
 	flag.BoolVar(&(opts.packageSplit), "pkg-split", false, "sequential cross-package calls get distinct nodes and edges in the graph.")
 	flag.BoolVar(&(opts.localPackages), "local-pkgs", false, "focus only local packages; when set, -internal-go is implicitly set to false.")
@@ -375,7 +375,8 @@ func (optInterface) AnalyzeAllFuncs() bool {
 
 func (optInterface) IsWholeProgramAnalysis() bool {
 	return (Opts().Task().IsAbstractInterpretation() ||
-		Opts().Task().IsCollectPrimitives()) &&
+		Opts().Task().IsCollectPrimitives() ||
+		Opts().Task().IsCfgToDot()) &&
 		opts.function == "main"
 }
 
