@@ -1,10 +1,11 @@
 package lattice
 
 import (
-	"Goat/analysis/defs"
-	loc "Goat/analysis/location"
-	i "Goat/utils/indenter"
 	"fmt"
+
+	"github.com/cs-au-dk/goat/analysis/defs"
+	loc "github.com/cs-au-dk/goat/analysis/location"
+	i "github.com/cs-au-dk/goat/utils/indenter"
 )
 
 //go:generate go run generate-map.go Analysis defs.Superloc AnalysisState

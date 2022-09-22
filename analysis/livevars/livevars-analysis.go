@@ -3,10 +3,10 @@ package livevars
 import (
 	"log"
 
-	"Goat/analysis/cfg"
-	L "Goat/analysis/lattice"
-	"Goat/utils"
-	"Goat/utils/worklist"
+	"github.com/cs-au-dk/goat/analysis/cfg"
+	L "github.com/cs-au-dk/goat/analysis/lattice"
+	"github.com/cs-au-dk/goat/utils"
+	"github.com/cs-au-dk/goat/utils/worklist"
 
 	"github.com/benbjohnson/immutable"
 	"golang.org/x/tools/go/pointer"

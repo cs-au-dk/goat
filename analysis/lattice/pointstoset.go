@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"sort"
 
-	loc "Goat/analysis/location"
-	i "Goat/utils/indenter"
-	"Goat/utils/tree"
+	loc "github.com/cs-au-dk/goat/analysis/location"
+	i "github.com/cs-au-dk/goat/utils/indenter"
+	"github.com/cs-au-dk/goat/utils/tree"
 )
 
 // A points to set element contains a set of locations internally represented

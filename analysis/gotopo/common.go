@@ -1,7 +1,7 @@
 package gotopo
 
 import (
-	"Goat/utils"
+	"github.com/cs-au-dk/goat/utils"
 
 	"github.com/fatih/color"
 )

@@ -1,12 +1,13 @@
 package ops
 
 import (
-	L "Goat/analysis/lattice"
-	loc "Goat/analysis/location"
 	"fmt"
 	"go/token"
 	"go/types"
 	"log"
+
+	L "github.com/cs-au-dk/goat/analysis/lattice"
+	loc "github.com/cs-au-dk/goat/analysis/location"
 
 	"golang.org/x/tools/go/ssa"
 )

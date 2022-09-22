@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	loc "Goat/analysis/location"
-	"Goat/utils"
+	loc "github.com/cs-au-dk/goat/analysis/location"
+	"github.com/cs-au-dk/goat/utils"
 
 	"golang.org/x/tools/go/ssa"
 )

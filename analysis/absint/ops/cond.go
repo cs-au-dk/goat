@@ -1,7 +1,7 @@
 package ops
 
 import (
-	L "Goat/analysis/lattice"
+	L "github.com/cs-au-dk/goat/analysis/lattice"
 )
 
 // Models stepping into .Wait() calls.

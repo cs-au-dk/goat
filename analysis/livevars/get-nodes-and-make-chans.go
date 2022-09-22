@@ -1,7 +1,7 @@
 package livevars
 
 import (
-	"Goat/analysis/cfg"
+	"github.com/cs-au-dk/goat/analysis/cfg"
 
 	"golang.org/x/tools/go/ssa"
 )

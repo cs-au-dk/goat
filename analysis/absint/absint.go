@@ -1,12 +1,6 @@
 package absint
 
 import (
-	A "Goat/analysis/absint/ops"
-	"Goat/analysis/cfg"
-	"Goat/analysis/defs"
-	L "Goat/analysis/lattice"
-	loc "Goat/analysis/location"
-	"Goat/utils"
 	"errors"
 	"fmt"
 	"go/constant"
@@ -14,6 +8,13 @@ import (
 	T "go/types"
 	"log"
 	"runtime/debug"
+
+	A "github.com/cs-au-dk/goat/analysis/absint/ops"
+	"github.com/cs-au-dk/goat/analysis/cfg"
+	"github.com/cs-au-dk/goat/analysis/defs"
+	L "github.com/cs-au-dk/goat/analysis/lattice"
+	loc "github.com/cs-au-dk/goat/analysis/location"
+	"github.com/cs-au-dk/goat/utils"
 
 	"golang.org/x/tools/go/ssa"
 )

@@ -7,11 +7,11 @@ import (
 	"strconv"
 	"strings"
 
-	"Goat/analysis/cfg"
-	"Goat/analysis/defs"
-	T "Goat/analysis/transition"
-	"Goat/analysis/upfront"
-	"Goat/utils/dot"
+	"github.com/cs-au-dk/goat/analysis/cfg"
+	"github.com/cs-au-dk/goat/analysis/defs"
+	T "github.com/cs-au-dk/goat/analysis/transition"
+	"github.com/cs-au-dk/goat/analysis/upfront"
+	"github.com/cs-au-dk/goat/utils/dot"
 )
 
 const condensePanickedConfigurations = true

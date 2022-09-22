@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"Goat/testutil"
+	"github.com/cs-au-dk/goat/testutil"
 )
 
 func TestSimpleBenchmarks(t *testing.T) {

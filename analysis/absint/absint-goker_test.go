@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
-	"Goat/analysis/defs"
-	"Goat/analysis/gotopo"
-	L "Goat/analysis/lattice"
-	"Goat/pkgutil"
-	"Goat/testutil"
-	tu "Goat/testutil"
+	"github.com/cs-au-dk/goat/analysis/defs"
+	"github.com/cs-au-dk/goat/analysis/gotopo"
+	L "github.com/cs-au-dk/goat/analysis/lattice"
+	"github.com/cs-au-dk/goat/pkgutil"
+	"github.com/cs-au-dk/goat/testutil"
+	tu "github.com/cs-au-dk/goat/testutil"
 
 	"github.com/fatih/color"
 	"golang.org/x/tools/go/ssa"

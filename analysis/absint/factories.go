@@ -1,8 +1,8 @@
 package absint
 
 import (
-	"Goat/utils"
-	"Goat/utils/hmap"
+	"github.com/cs-au-dk/goat/utils"
+	"github.com/cs-au-dk/goat/utils/hmap"
 )
 
 type factory struct{}

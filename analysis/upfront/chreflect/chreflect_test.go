@@ -1,8 +1,9 @@
 package chreflect
 
 import (
-	"Goat/testutil"
 	"testing"
+
+	"github.com/cs-au-dk/goat/testutil"
 
 	"golang.org/x/tools/go/ssa"
 )

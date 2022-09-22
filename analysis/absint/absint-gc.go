@@ -1,10 +1,10 @@
 package absint
 
 import (
-	"Goat/analysis/cfg"
-	"Goat/analysis/defs"
-	L "Goat/analysis/lattice"
-	loc "Goat/analysis/location"
+	"github.com/cs-au-dk/goat/analysis/cfg"
+	"github.com/cs-au-dk/goat/analysis/defs"
+	L "github.com/cs-au-dk/goat/analysis/lattice"
+	loc "github.com/cs-au-dk/goat/analysis/location"
 
 	"golang.org/x/tools/go/ssa"
 )

@@ -1,11 +1,12 @@
 package absint
 
 import (
-	L "Goat/analysis/lattice"
-	"Goat/utils/graph"
-	"Goat/utils/hmap"
-	"Goat/utils/worklist"
 	"fmt"
+
+	L "github.com/cs-au-dk/goat/analysis/lattice"
+	"github.com/cs-au-dk/goat/utils/graph"
+	"github.com/cs-au-dk/goat/utils/hmap"
+	"github.com/cs-au-dk/goat/utils/worklist"
 )
 
 type transfers map[uint32]getSuccResult

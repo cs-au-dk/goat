@@ -1,7 +1,7 @@
 package lattice
 
 import (
-	loc "Goat/analysis/location"
+	loc "github.com/cs-au-dk/goat/analysis/location"
 )
 
 //go:generate go run generate-product.go Cond Locker,Element,Element,Locker

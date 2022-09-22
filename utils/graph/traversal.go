@@ -1,6 +1,6 @@
 package graph
 
-import W "Goat/utils/worklist"
+import W "github.com/cs-au-dk/goat/utils/worklist"
 
 type traversalFunc[T any] func(node T) (stop bool)
 

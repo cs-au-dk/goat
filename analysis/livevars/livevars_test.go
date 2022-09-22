@@ -1,11 +1,12 @@
 package livevars
 
 import (
-	"Goat/analysis/cfg"
-	"Goat/analysis/upfront"
-	"Goat/pkgutil"
 	"fmt"
 	"runtime/debug"
+
+	"github.com/cs-au-dk/goat/analysis/cfg"
+	"github.com/cs-au-dk/goat/analysis/upfront"
+	"github.com/cs-au-dk/goat/pkgutil"
 
 	"testing"
 	"time"

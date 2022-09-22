@@ -1,12 +1,13 @@
 package location
 
 import (
-	"Goat/analysis/upfront"
-	"Goat/utils"
 	"fmt"
 	"go/types"
 	"log"
 	"regexp"
+
+	"github.com/cs-au-dk/goat/analysis/upfront"
+	"github.com/cs-au-dk/goat/utils"
 
 	"github.com/benbjohnson/immutable"
 	"github.com/fatih/color"

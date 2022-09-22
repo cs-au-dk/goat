@@ -1,10 +1,11 @@
 package lattice
 
 import (
-	"Goat/utils"
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/cs-au-dk/goat/utils"
 
 	"github.com/fatih/color"
 

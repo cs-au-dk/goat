@@ -1,11 +1,12 @@
 package lattice
 
 import (
-	"Goat/analysis/defs"
-	loc "Goat/analysis/location"
 	"go/token"
 	"go/types"
 	"testing"
+
+	"github.com/cs-au-dk/goat/analysis/defs"
+	loc "github.com/cs-au-dk/goat/analysis/location"
 
 	"golang.org/x/tools/go/ssa"
 )

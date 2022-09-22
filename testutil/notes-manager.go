@@ -1,10 +1,11 @@
 package testutil
 
 import (
-	"Goat/analysis/cfg"
-	"Goat/analysis/defs"
 	"fmt"
 	"testing"
+
+	"github.com/cs-au-dk/goat/analysis/cfg"
+	"github.com/cs-au-dk/goat/analysis/defs"
 
 	"golang.org/x/tools/go/expect"
 )

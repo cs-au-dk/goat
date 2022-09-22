@@ -1,14 +1,15 @@
 package absint
 
 import (
-	"Goat/analysis/cfg"
-	"Goat/analysis/defs"
-	L "Goat/analysis/lattice"
-	loc "Goat/analysis/location"
-	T "Goat/analysis/transition"
 	"fmt"
 	"log"
 	"time"
+
+	"github.com/cs-au-dk/goat/analysis/cfg"
+	"github.com/cs-au-dk/goat/analysis/defs"
+	L "github.com/cs-au-dk/goat/analysis/lattice"
+	loc "github.com/cs-au-dk/goat/analysis/location"
+	T "github.com/cs-au-dk/goat/analysis/transition"
 
 	"golang.org/x/tools/go/ssa"
 )

@@ -6,8 +6,8 @@ package lattice
 import (
 	"strings"
 
-	i "Goat/utils/indenter"
 	"fmt"
+	i "github.com/cs-au-dk/goat/utils/indenter"
 )
 
 type WrappedProductElement struct {

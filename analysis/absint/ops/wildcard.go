@@ -1,15 +1,16 @@
 package ops
 
 import (
-	"Goat/analysis/defs"
-	L "Goat/analysis/lattice"
-	u "Goat/analysis/upfront"
-	"Goat/utils"
 	"fmt"
 	T "go/types"
 	"log"
 
-	loc "Goat/analysis/location"
+	"github.com/cs-au-dk/goat/analysis/defs"
+	L "github.com/cs-au-dk/goat/analysis/lattice"
+	u "github.com/cs-au-dk/goat/analysis/upfront"
+	"github.com/cs-au-dk/goat/utils"
+
+	loc "github.com/cs-au-dk/goat/analysis/location"
 
 	"github.com/fatih/color"
 	"golang.org/x/tools/go/pointer"

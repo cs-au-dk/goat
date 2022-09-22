@@ -1,8 +1,9 @@
 package ops
 
 import (
-	L "Goat/analysis/lattice"
 	"go/token"
+
+	L "github.com/cs-au-dk/goat/analysis/lattice"
 
 	"golang.org/x/tools/go/ssa"
 )

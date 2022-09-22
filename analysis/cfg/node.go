@@ -1,11 +1,12 @@
 package cfg
 
 import (
-	"Goat/utils"
 	"errors"
 	"fmt"
 	"go/token"
 	"math/rand"
+
+	"github.com/cs-au-dk/goat/utils"
 
 	"golang.org/x/tools/go/ssa"
 )

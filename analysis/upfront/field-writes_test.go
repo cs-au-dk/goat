@@ -1,9 +1,10 @@
 package upfront_test
 
 import (
-	"Goat/testutil"
 	"go/types"
 	"testing"
+
+	"github.com/cs-au-dk/goat/testutil"
 )
 
 func TestWrittenFieldsAnalysis(t *testing.T) {

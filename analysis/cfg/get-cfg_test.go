@@ -1,10 +1,11 @@
 package cfg_test
 
 import (
-	"Goat/testutil"
 	"runtime/debug"
 	"strings"
 	"testing"
+
+	"github.com/cs-au-dk/goat/testutil"
 )
 
 func cfgTestPackage(t *testing.T, pkg string) {

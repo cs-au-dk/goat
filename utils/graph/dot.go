@@ -1,9 +1,10 @@
 package graph
 
 import (
-	"Goat/utils/dot"
-	"Goat/utils"
 	"fmt"
+
+	"github.com/cs-au-dk/goat/utils"
+	"github.com/cs-au-dk/goat/utils/dot"
 )
 
 var opts = utils.Opts()

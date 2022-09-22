@@ -1,10 +1,11 @@
 package transition
 
 import (
-	"Goat/analysis/defs"
-	loc "Goat/analysis/location"
-	"Goat/utils"
 	"fmt"
+
+	"github.com/cs-au-dk/goat/analysis/defs"
+	loc "github.com/cs-au-dk/goat/analysis/location"
+	"github.com/cs-au-dk/goat/utils"
 )
 
 type Lock struct {

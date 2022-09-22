@@ -1,9 +1,10 @@
 package defs
 
 import (
-	"Goat/analysis/cfg"
-	"Goat/utils"
 	"fmt"
+
+	"github.com/cs-au-dk/goat/analysis/cfg"
+	"github.com/cs-au-dk/goat/utils"
 
 	"github.com/benbjohnson/immutable"
 	"golang.org/x/tools/go/ssa"

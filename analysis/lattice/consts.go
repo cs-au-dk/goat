@@ -1,6 +1,6 @@
 package lattice
 
-import loc "Goat/analysis/location"
+import loc "github.com/cs-au-dk/goat/analysis/location"
 
 // Flat elements cannot not be statefully manipulated
 // in external sources. Passing shallows copies is safe.

@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"Goat/utils"
+	"github.com/cs-au-dk/goat/utils"
 
 	"golang.org/x/tools/go/packages"
 )

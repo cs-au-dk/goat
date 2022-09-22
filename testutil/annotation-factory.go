@@ -1,12 +1,13 @@
 package testutil
 
 import (
-	"Goat/analysis/cfg"
-	L "Goat/analysis/lattice"
 	"fmt"
 	"log"
 	"strconv"
 	"strings"
+
+	"github.com/cs-au-dk/goat/analysis/cfg"
+	L "github.com/cs-au-dk/goat/analysis/lattice"
 
 	"golang.org/x/tools/go/expect"
 	"golang.org/x/tools/go/ssa"

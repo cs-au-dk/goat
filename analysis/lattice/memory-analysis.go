@@ -1,8 +1,9 @@
 package lattice
 
 import (
-	loc "Goat/analysis/location"
 	"fmt"
+
+	loc "github.com/cs-au-dk/goat/analysis/location"
 )
 
 // Map methods

@@ -1,9 +1,10 @@
 package lattice
 
 import (
-	"Goat/analysis/defs"
-	loc "Goat/analysis/location"
 	"fmt"
+
+	"github.com/cs-au-dk/goat/analysis/defs"
+	loc "github.com/cs-au-dk/goat/analysis/location"
 )
 
 // Checks whether a location is represented by the provided top location.

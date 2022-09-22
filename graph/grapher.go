@@ -9,9 +9,9 @@ import (
 	"runtime"
 	"strings"
 
-	"Goat/analysis/upfront"
-	"Goat/utils"
-	"Goat/utils/dot"
+	"github.com/cs-au-dk/goat/analysis/upfront"
+	"github.com/cs-au-dk/goat/utils"
+	"github.com/cs-au-dk/goat/utils/dot"
 
 	"golang.org/x/tools/go/callgraph"
 	"golang.org/x/tools/go/pointer"

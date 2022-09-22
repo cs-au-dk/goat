@@ -1,8 +1,9 @@
 package transition
 
 import (
-	"Goat/analysis/defs"
 	"fmt"
+
+	"github.com/cs-au-dk/goat/analysis/defs"
 )
 
 type Transition interface {

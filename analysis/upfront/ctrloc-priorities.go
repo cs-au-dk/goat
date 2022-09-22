@@ -1,7 +1,7 @@
 package upfront
 
 import (
-	"Goat/utils/graph"
+	"github.com/cs-au-dk/goat/utils/graph"
 
 	"golang.org/x/tools/go/ssa"
 )

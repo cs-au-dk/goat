@@ -1,15 +1,16 @@
 package gotopo
 
 import (
-	"Goat/analysis/cfg"
-	"Goat/pkgutil"
-	"Goat/utils"
-	"Goat/utils/graph"
-	"Goat/utils/hmap"
-	"Goat/utils/worklist"
 	"go/token"
 	T "go/types"
 	"strings"
+
+	"github.com/cs-au-dk/goat/analysis/cfg"
+	"github.com/cs-au-dk/goat/pkgutil"
+	"github.com/cs-au-dk/goat/utils"
+	"github.com/cs-au-dk/goat/utils/graph"
+	"github.com/cs-au-dk/goat/utils/hmap"
+	"github.com/cs-au-dk/goat/utils/worklist"
 
 	uf "github.com/spakin/disjoint"
 
@@ -275,9 +276,9 @@ func (C psetCtxt) makeDependencyMapFromRootNode(
 }
 
 type psetConfig struct {
-	CFG   *cfg.Cfg
-	G     graph.Graph[*ssa.Function]
-	entry cfg.Node
+	CFG          *cfg.Cfg
+	G            graph.Graph[*ssa.Function]
+	entry        cfg.Node
 	chansInScope *utils.SSAValueSet
 }
 
@@ -315,7 +316,6 @@ func makePSetCtxt(C psetConfig) (ctxt psetCtxt) {
 					}
 				}
 			}
-
 
 			if post := n.CallRelationNode(); post != nil {
 				add(post)

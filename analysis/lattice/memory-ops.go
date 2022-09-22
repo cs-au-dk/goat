@@ -1,9 +1,10 @@
 package lattice
 
 import (
-	loc "Goat/analysis/location"
 	"fmt"
 	"log"
+
+	loc "github.com/cs-au-dk/goat/analysis/location"
 )
 
 /* Wrapper around a memory to facilitate memory operations on arbitrary

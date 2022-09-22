@@ -1,10 +1,6 @@
 package testutil
 
 import (
-	"Goat/analysis/cfg"
-	u "Goat/analysis/upfront"
-	"Goat/pkgutil"
-	"Goat/utils/graph"
 	"bytes"
 	"go/ast"
 	"go/importer"
@@ -17,6 +13,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cs-au-dk/goat/analysis/cfg"
+	u "github.com/cs-au-dk/goat/analysis/upfront"
+	"github.com/cs-au-dk/goat/pkgutil"
+	"github.com/cs-au-dk/goat/utils/graph"
 
 	_ "github.com/fatih/color"
 
@@ -82,7 +83,7 @@ func LoadExamplePackage(t *testing.T, pathToRoot string, pkg string) LoadResult 
 	}
 
 	// Create a main-package from the specified package
-	pkgs, err := pkgutil.LoadPackages(pkgutil.LoadConfig{GoPath: pathToRoot+"/examples"}, pkg)
+	pkgs, err := pkgutil.LoadPackages(pkgutil.LoadConfig{GoPath: pathToRoot + "/examples"}, pkg)
 	if err != nil {
 		t.Fatal(err)
 	}

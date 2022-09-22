@@ -1,9 +1,10 @@
 package absint
 
 import (
-	L "Goat/analysis/lattice"
 	"fmt"
 	"strconv"
+
+	L "github.com/cs-au-dk/goat/analysis/lattice"
 )
 
 type ABSTRACTION_LEVEL int

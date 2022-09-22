@@ -1,6 +1,6 @@
 package hmap
 
-import "Goat/utils"
+import "github.com/cs-au-dk/goat/utils"
 
 // A simple implementation of a mutable hash map.
 // Useful when we cannot use Go's maps directly, and we want to avoid the

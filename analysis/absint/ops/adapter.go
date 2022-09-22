@@ -1,8 +1,9 @@
 package ops
 
 import (
-	L "Goat/analysis/lattice"
 	T "go/types"
+
+	L "github.com/cs-au-dk/goat/analysis/lattice"
 )
 
 // Adapt types for implicit/permissive type coercions allowed by Golang

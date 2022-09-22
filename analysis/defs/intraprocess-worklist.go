@@ -1,11 +1,12 @@
 package defs
 
 import (
-	"Goat/analysis/cfg"
-	u "Goat/analysis/upfront"
-	"Goat/utils"
-	"Goat/utils/pq"
 	"fmt"
+
+	"github.com/cs-au-dk/goat/analysis/cfg"
+	u "github.com/cs-au-dk/goat/analysis/upfront"
+	"github.com/cs-au-dk/goat/utils"
+	"github.com/cs-au-dk/goat/utils/pq"
 )
 
 // A worklist that contains control locations.

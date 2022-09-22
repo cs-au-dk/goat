@@ -1,13 +1,14 @@
 package loopinline
 
 import (
-	"Goat/pkgutil"
 	"fmt"
 	"go/ast"
 	"go/printer"
 	"go/token"
 	"go/types"
 	"os"
+
+	"github.com/cs-au-dk/goat/pkgutil"
 
 	"golang.org/x/tools/go/ast/astutil"
 	"golang.org/x/tools/go/packages"

@@ -1,8 +1,9 @@
 package chreflect
 
 import (
-	"Goat/utils"
 	"go/types"
+
+	"github.com/cs-au-dk/goat/utils"
 
 	"golang.org/x/tools/go/pointer"
 	"golang.org/x/tools/go/ssa"

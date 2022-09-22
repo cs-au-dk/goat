@@ -1,11 +1,12 @@
 package absint
 
 import (
-	"Goat/analysis/cfg"
-	"Goat/analysis/defs"
-	"Goat/pkgutil"
 	"fmt"
 	"time"
+
+	"github.com/cs-au-dk/goat/analysis/cfg"
+	"github.com/cs-au-dk/goat/analysis/defs"
+	"github.com/cs-au-dk/goat/pkgutil"
 
 	"golang.org/x/tools/go/ssa"
 )

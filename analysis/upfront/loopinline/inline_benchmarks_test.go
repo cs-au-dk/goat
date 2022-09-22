@@ -1,14 +1,15 @@
 package loopinline_test
 
 import (
-	"Goat/analysis/absint"
-	"Goat/analysis/defs"
-	"Goat/analysis/upfront/loopinline"
-	"Goat/pkgutil"
-	"Goat/testutil"
 	"go/printer"
 	"strings"
 	"testing"
+
+	"github.com/cs-au-dk/goat/analysis/absint"
+	"github.com/cs-au-dk/goat/analysis/defs"
+	"github.com/cs-au-dk/goat/analysis/upfront/loopinline"
+	"github.com/cs-au-dk/goat/pkgutil"
+	"github.com/cs-au-dk/goat/testutil"
 
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
@@ -23,7 +24,7 @@ func TestLoopInlineBenchmarks(t *testing.T) {
 		t.Run(test, func(t *testing.T) {
 			t.Parallel()
 
-			pkgs, err := pkgutil.LoadPackages(pkgutil.LoadConfig{GoPath: pathToRoot+"/examples"}, test)
+			pkgs, err := pkgutil.LoadPackages(pkgutil.LoadConfig{GoPath: pathToRoot + "/examples"}, test)
 			if err != nil {
 				t.Fatal(err)
 			}

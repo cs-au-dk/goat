@@ -1,10 +1,11 @@
 package loopinline
 
 import (
-	"Goat/pkgutil"
 	"go/printer"
 	"strings"
 	"testing"
+
+	"github.com/cs-au-dk/goat/pkgutil"
 
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"

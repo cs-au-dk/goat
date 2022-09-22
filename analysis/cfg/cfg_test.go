@@ -1,10 +1,11 @@
 package cfg
 
 import (
-	"Goat/analysis/upfront"
-	"Goat/pkgutil"
-	"Goat/utils/worklist"
 	"testing"
+
+	"github.com/cs-au-dk/goat/analysis/upfront"
+	"github.com/cs-au-dk/goat/pkgutil"
+	"github.com/cs-au-dk/goat/utils/worklist"
 
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"

@@ -1,10 +1,11 @@
 package upfront
 
 import (
-	"Goat/pkgutil"
 	"fmt"
 	"go/token"
 	"go/types"
+
+	"github.com/cs-au-dk/goat/pkgutil"
 
 	"golang.org/x/tools/go/pointer"
 	"golang.org/x/tools/go/ssa"

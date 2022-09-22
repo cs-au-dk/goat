@@ -1,9 +1,10 @@
 package lattice
 
 import (
-	loc "Goat/analysis/location"
-	i "Goat/utils/indenter"
 	"fmt"
+
+	loc "github.com/cs-au-dk/goat/analysis/location"
+	i "github.com/cs-au-dk/goat/utils/indenter"
 
 	"golang.org/x/tools/go/ssa"
 )

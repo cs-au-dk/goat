@@ -5,9 +5,9 @@ import (
 	"log"
 	"strconv"
 
-	"Goat/pkgutil"
-	"Goat/utils"
-	"Goat/utils/dot"
+	"github.com/cs-au-dk/goat/pkgutil"
+	"github.com/cs-au-dk/goat/utils"
+	"github.com/cs-au-dk/goat/utils/dot"
 
 	"golang.org/x/tools/go/pointer"
 	"golang.org/x/tools/go/ssa"

@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"strings"
 
-	"Goat/utils"
+	"github.com/cs-au-dk/goat/utils"
 
 	"golang.org/x/tools/go/ssa"
 )
@@ -28,8 +28,6 @@ func CheckInGoroot(fun *ssa.Function) bool {
 	return fun != nil && fun.Pkg != nil &&
 		CheckPkgInGoroot(fun.Pkg.Pkg)
 }
-
-
 
 // Determine what is the main package as follows:
 // 1. Take the package with the most members

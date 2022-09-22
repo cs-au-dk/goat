@@ -1,8 +1,9 @@
 package lattice
 
 import (
-	"Goat/utils"
 	"go/types"
+
+	"github.com/cs-au-dk/goat/utils"
 )
 
 type AbstractValueLattice struct {

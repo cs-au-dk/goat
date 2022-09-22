@@ -1,15 +1,16 @@
 package absint
 
 import (
-	"Goat/analysis/gotopo"
-	"Goat/analysis/upfront"
-	"Goat/pkgutil"
-	tu "Goat/testutil"
-	"Goat/utils/graph"
 	"fmt"
 	"go/types"
 	"sort"
 	"testing"
+
+	"github.com/cs-au-dk/goat/analysis/gotopo"
+	"github.com/cs-au-dk/goat/analysis/upfront"
+	"github.com/cs-au-dk/goat/pkgutil"
+	tu "github.com/cs-au-dk/goat/testutil"
+	"github.com/cs-au-dk/goat/utils/graph"
 
 	"golang.org/x/tools/go/ssa"
 )

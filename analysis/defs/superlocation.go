@@ -1,13 +1,14 @@
 package defs
 
 import (
-	"Goat/utils"
 	"fmt"
 	"log"
 	"sort"
 	"strings"
 
-	i "Goat/utils/indenter"
+	"github.com/cs-au-dk/goat/utils"
+
+	i "github.com/cs-au-dk/goat/utils/indenter"
 
 	"github.com/benbjohnson/immutable"
 )

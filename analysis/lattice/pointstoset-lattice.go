@@ -1,8 +1,8 @@
 package lattice
 
 import (
-	loc "Goat/analysis/location"
-	"Goat/utils/tree"
+	loc "github.com/cs-au-dk/goat/analysis/location"
+	"github.com/cs-au-dk/goat/utils/tree"
 )
 
 type PointsToLattice struct {

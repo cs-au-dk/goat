@@ -1,9 +1,10 @@
 package upfront
 
 import (
-	"Goat/utils"
-	"Goat/utils/graph"
 	"sort"
+
+	"github.com/cs-au-dk/goat/utils"
+	"github.com/cs-au-dk/goat/utils/graph"
 
 	"fmt"
 	T "go/types"

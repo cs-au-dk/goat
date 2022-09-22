@@ -1,14 +1,15 @@
 package absint
 
 import (
-	A "Goat/analysis/absint/ops"
-	"Goat/analysis/defs"
-	L "Goat/analysis/lattice"
-	loc "Goat/analysis/location"
-	"Goat/utils"
 	T "go/types"
 	"log"
 	"strings"
+
+	A "github.com/cs-au-dk/goat/analysis/absint/ops"
+	"github.com/cs-au-dk/goat/analysis/defs"
+	L "github.com/cs-au-dk/goat/analysis/lattice"
+	loc "github.com/cs-au-dk/goat/analysis/location"
+	"github.com/cs-au-dk/goat/utils"
 
 	"golang.org/x/tools/go/ssa"
 )
@@ -169,7 +170,6 @@ func (C AnalysisCtxt) stdCall(
 
 		return updMem(mops.Memory().Update(callLoc, ptr))
 	}
-
 
 	funName := fun.String()
 	switch funName {

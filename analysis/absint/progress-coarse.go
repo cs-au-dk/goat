@@ -1,10 +1,11 @@
 package absint
 
 import (
-	"Goat/analysis/defs"
-	L "Goat/analysis/lattice"
 	"fmt"
 	"log"
+
+	"github.com/cs-au-dk/goat/analysis/defs"
+	L "github.com/cs-au-dk/goat/analysis/lattice"
 )
 
 // Takes an abstract configuration and tries to progress threads as far as possible using only silent transitions.

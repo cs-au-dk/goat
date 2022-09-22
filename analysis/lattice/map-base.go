@@ -1,9 +1,10 @@
 package lattice
 
 import (
-	i "Goat/utils/indenter"
 	"fmt"
 	"log"
+
+	i "github.com/cs-au-dk/goat/utils/indenter"
 
 	"github.com/benbjohnson/immutable"
 )

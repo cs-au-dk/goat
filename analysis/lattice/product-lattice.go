@@ -1,8 +1,9 @@
 package lattice
 
 import (
-	i "Goat/utils/indenter"
 	"fmt"
+
+	i "github.com/cs-au-dk/goat/utils/indenter"
 )
 
 type ProductLattice struct {

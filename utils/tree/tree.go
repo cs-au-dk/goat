@@ -3,8 +3,8 @@ package tree
 import (
 	"fmt"
 
-	"Goat/utils"
-	i "Goat/utils/indenter"
+	"github.com/cs-au-dk/goat/utils"
+	i "github.com/cs-au-dk/goat/utils/indenter"
 )
 
 // Constructs a new persistent key-value map with the specified hasher.
@@ -131,7 +131,7 @@ func (b *branch[K, V]) match(key keyt) bool {
 }
 
 type pair[K, V any] struct {
-	key K
+	key   K
 	value V
 }
 type leaf[K, V any] struct {

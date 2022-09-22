@@ -1,11 +1,12 @@
 package gotopo
 
 import (
-	"Goat/utils"
-	"Goat/utils/graph"
 	"go/token"
 	"go/types"
 	"strings"
+
+	"github.com/cs-au-dk/goat/utils"
+	"github.com/cs-au-dk/goat/utils/graph"
 
 	"golang.org/x/tools/go/pointer"
 	"golang.org/x/tools/go/ssa"
@@ -34,7 +35,7 @@ func GetPrimitives(entry *ssa.Function, pt *pointer.Result, G graph.Graph[*ssa.F
 
 func (p Primitives) Chans() utils.SSAValueSet {
 	set := utils.MakeSSASet()
-	
+
 	for _, info := range p {
 		for ch := range info.Chans() {
 			set = set.Add(ch)
@@ -172,8 +173,8 @@ func (p Primitives) process(f *ssa.Function, pt *pointer.Result) {
 				switch {
 				case call == _CHAN_CALL:
 					addPrimitive(p, fu.AddUseChan)
-				// case call == _SYNC_CALL || call == _BLOCKING_SYNC_CALL:
-				// 	addPrimitive(p, fu.AddUseSync)
+					// case call == _SYNC_CALL || call == _BLOCKING_SYNC_CALL:
+					// 	addPrimitive(p, fu.AddUseSync)
 				}
 
 				// if val := i.Value(); val != nil {

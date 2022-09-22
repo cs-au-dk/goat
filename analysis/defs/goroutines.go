@@ -1,8 +1,9 @@
 package defs
 
 import (
-	"Goat/utils"
 	"strconv"
+
+	"github.com/cs-au-dk/goat/utils"
 
 	"github.com/benbjohnson/immutable"
 )

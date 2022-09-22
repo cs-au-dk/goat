@@ -1,15 +1,16 @@
 package absint
 
 import (
-	"Goat/analysis/absint/ops"
-	"Goat/analysis/cfg"
-	"Goat/analysis/defs"
-	L "Goat/analysis/lattice"
-	loc "Goat/analysis/location"
-	"Goat/analysis/transition"
-	"Goat/utils"
-	"Goat/utils/graph"
 	"fmt"
+
+	"github.com/cs-au-dk/goat/analysis/absint/ops"
+	"github.com/cs-au-dk/goat/analysis/cfg"
+	"github.com/cs-au-dk/goat/analysis/defs"
+	L "github.com/cs-au-dk/goat/analysis/lattice"
+	loc "github.com/cs-au-dk/goat/analysis/location"
+	"github.com/cs-au-dk/goat/analysis/transition"
+	"github.com/cs-au-dk/goat/utils"
+	"github.com/cs-au-dk/goat/utils/graph"
 
 	"github.com/fatih/color"
 

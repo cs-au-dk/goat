@@ -1,8 +1,8 @@
 package upfront
 
 import (
-	"Goat/pkgutil"
-	"Goat/utils"
+	"github.com/cs-au-dk/goat/pkgutil"
+	"github.com/cs-au-dk/goat/utils"
 
 	"golang.org/x/tools/go/ssa"
 )

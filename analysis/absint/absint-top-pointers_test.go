@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	tu "Goat/testutil"
+	tu "github.com/cs-au-dk/goat/testutil"
 
 	"golang.org/x/tools/go/ssa"
 )

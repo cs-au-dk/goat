@@ -1,7 +1,7 @@
 package defs
 
 import (
-	u "Goat/utils"
+	u "github.com/cs-au-dk/goat/utils"
 
 	c "github.com/fatih/color"
 )

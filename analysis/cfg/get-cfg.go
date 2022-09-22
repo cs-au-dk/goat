@@ -1,11 +1,12 @@
 package cfg
 
 import (
-	"Goat/pkgutil"
-	"Goat/utils"
 	"fmt"
 	"log"
 	"strconv"
+
+	"github.com/cs-au-dk/goat/pkgutil"
+	"github.com/cs-au-dk/goat/utils"
 
 	"go/constant"
 	"go/token"

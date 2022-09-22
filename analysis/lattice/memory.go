@@ -1,12 +1,13 @@
 package lattice
 
 import (
-	loc "Goat/analysis/location"
-	i "Goat/utils/indenter"
-	"Goat/utils/tree"
 	"fmt"
 	"log"
 	"sort"
+
+	loc "github.com/cs-au-dk/goat/analysis/location"
+	i "github.com/cs-au-dk/goat/utils/indenter"
+	"github.com/cs-au-dk/goat/utils/tree"
 )
 
 // TODO: Update memory lattice?

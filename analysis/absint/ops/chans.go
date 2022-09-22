@@ -1,7 +1,7 @@
 package ops
 
 import (
-	L "Goat/analysis/lattice"
+	L "github.com/cs-au-dk/goat/analysis/lattice"
 )
 
 type valueTransfer = func(L.AbstractValue) L.OpOutcomes

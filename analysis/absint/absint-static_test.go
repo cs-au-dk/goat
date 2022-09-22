@@ -1,15 +1,16 @@
 package absint
 
 import (
-	"Goat/analysis/defs"
-	L "Goat/analysis/lattice"
-	"Goat/analysis/location"
-	tu "Goat/testutil"
 	"fmt"
 	"runtime/debug"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/cs-au-dk/goat/analysis/defs"
+	L "github.com/cs-au-dk/goat/analysis/lattice"
+	"github.com/cs-au-dk/goat/analysis/location"
+	tu "github.com/cs-au-dk/goat/testutil"
 
 	"github.com/benbjohnson/immutable"
 )

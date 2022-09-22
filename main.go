@@ -1,7 +1,7 @@
 package main
 
 import (
-	// "Goat/solver"
+	// "github.com/cs-au-dk/goat/solver"
 
 	"fmt"
 	"go/types"
@@ -15,20 +15,20 @@ import (
 	"sync"
 	"time"
 
-	"Goat/analysis/upfront/chreflect"
-	"Goat/analysis/upfront/loopinline"
-	dot "Goat/graph"
-	"Goat/pkgutil"
-	tu "Goat/testutil"
-	"Goat/utils"
-	"Goat/utils/graph"
-	"Goat/utils/hmap"
+	"github.com/cs-au-dk/goat/analysis/upfront/chreflect"
+	"github.com/cs-au-dk/goat/analysis/upfront/loopinline"
+	dot "github.com/cs-au-dk/goat/graph"
+	"github.com/cs-au-dk/goat/pkgutil"
+	tu "github.com/cs-au-dk/goat/testutil"
+	"github.com/cs-au-dk/goat/utils"
+	"github.com/cs-au-dk/goat/utils/graph"
+	"github.com/cs-au-dk/goat/utils/hmap"
 
-	ai "Goat/analysis/absint"
-	"Goat/analysis/cfg"
-	"Goat/analysis/defs"
-	"Goat/analysis/gotopo"
-	u "Goat/analysis/upfront"
+	ai "github.com/cs-au-dk/goat/analysis/absint"
+	"github.com/cs-au-dk/goat/analysis/cfg"
+	"github.com/cs-au-dk/goat/analysis/defs"
+	"github.com/cs-au-dk/goat/analysis/gotopo"
+	u "github.com/cs-au-dk/goat/analysis/upfront"
 
 	"github.com/fatih/color"
 	"golang.org/x/tools/go/callgraph/rta"
@@ -377,14 +377,14 @@ func main() {
 			log.Printf("Entry %d of %d: %v", idx+1, len(entries), entry)
 
 			/*
-			var spkg *ssa.Package
-			if entry.Name() == "main" {
-				spkg = entry.Package()
-			} else {
-				spkg = pkgutil.CreateFakeTestMainPackage(entry)
-			}
+				var spkg *ssa.Package
+				if entry.Name() == "main" {
+					spkg = entry.Package()
+				} else {
+					spkg = pkgutil.CreateFakeTestMainPackage(entry)
+				}
 
-			mains = []*ssa.Package{spkg}
+				mains = []*ssa.Package{spkg}
 			*/
 
 			callDAG := G.SCC([]*ssa.Function{entry})
@@ -489,7 +489,7 @@ func main() {
 
 			type fragment struct {
 				entry *ssa.Function
-				pset utils.SSAValueSet
+				pset  utils.SSAValueSet
 			}
 
 			fragments := []fragment{}
@@ -599,38 +599,38 @@ func main() {
 				}
 
 				/*
-				allocSiteExpansions := 0
-				pset.ForEach(func(prim ssa.Value) {
-					allocSiteExpansions += C.Metrics.Functions()[prim.Parent()]
-				})
+					allocSiteExpansions := 0
+					pset.ForEach(func(prim ssa.Value) {
+						allocSiteExpansions += C.Metrics.Functions()[prim.Parent()]
+					})
 
-				syncConfsWithPrimitive := 0
-				ts.ForEach(func(conf *ai.AbsConfiguration) {
-					state := analysis.GetUnsafe(conf.Superlocation())
-					if !conf.IsPanicked() && conf.IsSynchronizing(C, state) {
-						mem := state.Memory()
-						_, _, found := conf.Threads().Find(func(g defs.Goro, cl defs.CtrLoc) bool {
-							for _, prim := range cfg.CommunicationPrimitivesOf(cl.Node()) {
-								if av := ai.EvaluateSSA(g, mem, prim); av.IsPointer() {
-									for _, ptr := range av.PointerValue().Entries() {
-										site, _ := ptr.GetSite()
-										if C.IsPrimitiveFocused(site) {
-											return true
+					syncConfsWithPrimitive := 0
+					ts.ForEach(func(conf *ai.AbsConfiguration) {
+						state := analysis.GetUnsafe(conf.Superlocation())
+						if !conf.IsPanicked() && conf.IsSynchronizing(C, state) {
+							mem := state.Memory()
+							_, _, found := conf.Threads().Find(func(g defs.Goro, cl defs.CtrLoc) bool {
+								for _, prim := range cfg.CommunicationPrimitivesOf(cl.Node()) {
+									if av := ai.EvaluateSSA(g, mem, prim); av.IsPointer() {
+										for _, ptr := range av.PointerValue().Entries() {
+											site, _ := ptr.GetSite()
+											if C.IsPrimitiveFocused(site) {
+												return true
+											}
 										}
 									}
 								}
+								return false
+							})
+
+							if found {
+								syncConfsWithPrimitive++
 							}
-							return false
-						})
-
-						if found {
-							syncConfsWithPrimitive++
 						}
-					}
-				})
+					})
 
-				log.Printf("allocSiteExpansions: %d, synchronizing configurations with primitive: %d",
-					allocSiteExpansions, syncConfsWithPrimitive)
+					log.Printf("allocSiteExpansions: %d, synchronizing configurations with primitive: %d",
+						allocSiteExpansions, syncConfsWithPrimitive)
 				*/
 			}
 		}

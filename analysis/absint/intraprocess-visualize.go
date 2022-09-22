@@ -1,13 +1,14 @@
 package absint
 
 import (
-	"Goat/analysis/cfg"
-	"Goat/analysis/defs"
-	L "Goat/analysis/lattice"
-	"Goat/utils"
-	"Goat/utils/dot"
 	"fmt"
 	"strconv"
+
+	"github.com/cs-au-dk/goat/analysis/cfg"
+	"github.com/cs-au-dk/goat/analysis/defs"
+	L "github.com/cs-au-dk/goat/analysis/lattice"
+	"github.com/cs-au-dk/goat/utils"
+	"github.com/cs-au-dk/goat/utils/dot"
 
 	"golang.org/x/tools/go/ssa"
 )
@@ -112,7 +113,6 @@ func VisualizeIntraprocess(
 
 	G.ShowDot()
 }
-
 
 func StringifyNodeArguments(g defs.Goro, mem L.Memory, node cfg.Node) (label string) {
 	var ops []ssa.Value

@@ -1,9 +1,10 @@
 package absint
 
 import (
-	T "Goat/analysis/transition"
-	"Goat/utils"
 	"fmt"
+
+	T "github.com/cs-au-dk/goat/analysis/transition"
+	"github.com/cs-au-dk/goat/utils"
 )
 
 // Basic successor implementation for any configuration. Successors at

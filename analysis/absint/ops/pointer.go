@@ -1,8 +1,8 @@
 package ops
 
 import (
-	L "Goat/analysis/lattice"
-	loc "Goat/analysis/location"
+	L "github.com/cs-au-dk/goat/analysis/lattice"
+	loc "github.com/cs-au-dk/goat/analysis/location"
 )
 
 // Get all the locations that could be dereferenced

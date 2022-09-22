@@ -1,12 +1,13 @@
 package absint
 
 import (
-	"Goat/utils/pq"
 	"os"
 	"os/signal"
 	"syscall"
 
-	L "Goat/analysis/lattice"
+	"github.com/cs-au-dk/goat/utils/pq"
+
+	L "github.com/cs-au-dk/goat/analysis/lattice"
 )
 
 // Harness for performing fully static analysis.

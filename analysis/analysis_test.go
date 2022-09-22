@@ -6,9 +6,9 @@ import (
 
 	"runtime/debug"
 
-	ai "Goat/analysis/absint"
-	tu "Goat/testutil"
-	"Goat/utils"
+	ai "github.com/cs-au-dk/goat/analysis/absint"
+	tu "github.com/cs-au-dk/goat/testutil"
+	"github.com/cs-au-dk/goat/utils"
 
 	"golang.org/x/tools/go/expect"
 )

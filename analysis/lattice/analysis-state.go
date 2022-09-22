@@ -1,7 +1,7 @@
 package lattice
 
 import (
-	"Goat/analysis/defs"
+	"github.com/cs-au-dk/goat/analysis/defs"
 )
 
 //go:generate go run generate-product.go AnalysisState Memory,Memory,Memory,Memory ThreadCharges,ThreadCharges,ThreadCharges,Charges
