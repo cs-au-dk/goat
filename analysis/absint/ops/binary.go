@@ -109,8 +109,16 @@ func int64BinOp(v1 int64, v2 int64, op token.Token) (val L.AbstractValue, suppor
 	case token.MUL:
 		res = v1 * v2
 	case token.QUO:
+		if v2 == 0 {
+			return L.Consts().BotValue(), true
+		}
+
 		res = v1 / v2
 	case token.REM:
+		if v2 == 0 {
+			return L.Consts().BotValue(), true
+		}
+
 		res = v1 % v2
 	case token.AND:
 		res = v1 & v2

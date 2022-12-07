@@ -41,7 +41,7 @@ func (cfg *Cfg) removeNode(node Node) {
 	}
 }
 
-func compressCfg() {
+func compress(cfg *Cfg) {
 	deferBookkeeping := make(map[Node]map[Node]struct{})
 
 	visited := make(map[Node]bool)

@@ -8,7 +8,7 @@ const (
 )
 
 var outcomesLattice = &OpOutcomesLattice{
-	mp: *latFact.MapVariadic(valueLattice,
+	mp: *MakeMapLatticeVariadic[string](valueLattice,
 		_OUTCOME_OK,
 		_OUTCOME_PANIC,
 	),
@@ -35,7 +35,7 @@ func (e OpOutcomes) MaySucceed() bool {
 }
 
 func (e OpOutcomes) Blocks() bool {
-	return e.mp.ForAll(func(key interface{}, e Element) bool {
+	return e.mp.ForAll(func(key string, e Element) bool {
 		return e.AbstractValue().IsBot()
 	})
 }

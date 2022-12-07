@@ -12,20 +12,20 @@ package graph
 	describing the edge relation (and a key-value map factory for the node type).
 */
 
-type mapper[K any] interface {
+type Mapper[K any] interface {
 	Get(key K) (any, bool)
 	Set(key K, value any)
 }
 
 // TODO: There's currently no way to specify an additional type parameter on
 // the function type for the types of values in the map.
-type mapFactory[K any] func() mapper[K]
+type mapFactory[K any] func() Mapper[K]
 type edgesOf[T any] func(node T) []T
 
 type Graph[T any] struct {
 	mapFactory  mapFactory[T]
 	edgesOf     edgesOf[T]
-	cachedEdges mapper[T]
+	cachedEdges Mapper[T]
 }
 
 func (G Graph[T]) Edges(node T) []T {
@@ -59,5 +59,5 @@ func (m mapMapper[K]) Set(key K, value any) {
 }
 
 func OfHashable[K comparable](edgesOf edgesOf[K]) Graph[K] {
-	return Of(func() mapper[K] { return mapMapper[K]{} }, edgesOf)
+	return Of(func() Mapper[K] { return mapMapper[K]{} }, edgesOf)
 }

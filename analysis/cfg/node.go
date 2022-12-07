@@ -260,19 +260,6 @@ func (n *SSANode) CommTransitive() map[Node]struct{} {
 			for succ := range n.Successors() {
 				visit(succ)
 			}
-			// Return a termination node if the node is a function exit
-			// with no successors (helps with annotations on exit nodes)
-			if len(n.Successors()) == 0 {
-				_, ok := n.(*FunctionExit)
-				if ok {
-					term, _ := cfg.addSynthetic(SynthConfig{
-						Type:             SynthTypes.TERMINATE_GORO,
-						Function:         n.Function(),
-						TerminationCause: GoroTermination.EXIT_ROOT,
-					})
-					succs[term] = struct{}{}
-				}
-			}
 
 			if dfr := n.DeferLink(); len(n.Successors()) == 0 && !n.IsDeferred() && dfr != nil {
 				visit(dfr)

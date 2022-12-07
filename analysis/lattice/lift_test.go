@@ -5,9 +5,9 @@ import "testing"
 func TestLiftComparison(t *testing.T) {
 	var T = Create().Lattice().TwoElement().Top()
 
-	mapLat := Create().Lattice().MapVariadic(Create().Lattice().TwoElement(), "a", "b", "c")
+	mapLat := MakeMapLatticeVariadic[string](Create().Lattice().TwoElement(), "a", "b", "c")
 	liftedMapLat := Lift(mapLat)
-	elFactory := Create().Element().Map(mapLat)
+	elFactory := MakeMap[string](mapLat)
 
 	aT := elFactory(map[interface{}]Element{
 		"a": T,
@@ -60,8 +60,8 @@ func TestLiftComparison(t *testing.T) {
 func TestLiftJoin(t *testing.T) {
 	var T = Create().Lattice().TwoElement().Top()
 
-	liftedMapLat := Lift(Create().Lattice().MapVariadic(Create().Lattice().TwoElement(), "a", "b", "c"))
-	elFactory := Create().Element().Map(liftedMapLat)
+	liftedMapLat := Lift(MakeMapLatticeVariadic[string](Create().Lattice().TwoElement(), "a", "b", "c"))
+	elFactory := MakeMap[string](liftedMapLat)
 	aT := elFactory(map[interface{}]Element{
 		"a": T,
 	})

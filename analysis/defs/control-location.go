@@ -6,11 +6,8 @@ import (
 	"github.com/cs-au-dk/goat/analysis/cfg"
 	"github.com/cs-au-dk/goat/utils"
 
-	"github.com/benbjohnson/immutable"
 	"golang.org/x/tools/go/ssa"
 )
-
-//go:generate go run generate-hasher.go CtrLoc ControlLocation
 
 type ctrlocContext struct {
 	root *ssa.Function
@@ -25,10 +22,6 @@ type ctrlocContext struct {
 type CtrLoc struct {
 	node    cfg.Node
 	context ctrlocContext
-}
-
-func NewControllocationMap() *immutable.Map {
-	return immutable.NewMap(hasherCtrLoc{})
 }
 
 func (factory) CtrLoc(n cfg.Node, root *ssa.Function, panicked bool) CtrLoc {
@@ -106,7 +99,7 @@ func bhash(b bool) uint32 {
 }
 
 func (cl CtrLoc) Hash() uint32 {
-	phasher := utils.PointerHasher{}
+	phasher := utils.PointerHasher[any]{}
 	return utils.HashCombine(
 		phasher.Hash(cl.node),
 		phasher.Hash(cl.context.root),

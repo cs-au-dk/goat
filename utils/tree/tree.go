@@ -3,17 +3,18 @@ package tree
 import (
 	"fmt"
 
-	"github.com/cs-au-dk/goat/utils"
 	i "github.com/cs-au-dk/goat/utils/indenter"
+
+	"github.com/benbjohnson/immutable"
 )
 
 // Constructs a new persistent key-value map with the specified hasher.
-func NewTree[K, V any](hasher utils.Hasher[K]) Tree[K, V] {
+func NewTree[K, V any](hasher immutable.Hasher[K]) Tree[K, V] {
 	return Tree[K, V]{hasher, nil}
 }
 
 type Tree[K, V any] struct {
-	hasher utils.Hasher[K]
+	hasher immutable.Hasher[K]
 	root   node[K, V]
 }
 
@@ -168,7 +169,7 @@ func br[K, V any](prefix, branchBit keyt, left, right node[K, V]) node[K, V] {
 }
 
 // Recursive lookup on tree.
-func lookup[K, V any](tree node[K, V], hash keyt, key K, hasher utils.Hasher[K]) (ret V, found bool) {
+func lookup[K, V any](tree node[K, V], hash keyt, key K, hasher immutable.Hasher[K]) (ret V, found bool) {
 	if tree == nil {
 		return
 	}
@@ -223,7 +224,7 @@ type mergeFunc[V any] func(a, b V) (V, bool)
 // If `f` is nil the old value is always replaced with the argument value, otherwise
 // the old value is replaced with `f(value, prevValue)`.
 // If the returned flag is false, the returned node is (reference-)equal to the input node.
-func insert[K, V any](tree node[K, V], hash keyt, key K, value V, hasher utils.Hasher[K], f mergeFunc[V]) (node[K, V], bool) {
+func insert[K, V any](tree node[K, V], hash keyt, key K, value V, hasher immutable.Hasher[K], f mergeFunc[V]) (node[K, V], bool) {
 	if tree == nil {
 		return &leaf[K, V]{key: hash, values: []pair[K, V]{{key, value}}}, true
 	}
@@ -284,7 +285,7 @@ func insert[K, V any](tree node[K, V], hash keyt, key K, value V, hasher utils.H
 	return join(hash, prefix, newLeaf, tree), true
 }
 
-func remove[K, V any](tree node[K, V], hash keyt, key K, hasher utils.Hasher[K]) node[K, V] {
+func remove[K, V any](tree node[K, V], hash keyt, key K, hasher immutable.Hasher[K]) node[K, V] {
 	if tree == nil {
 		return tree
 	}
@@ -324,7 +325,7 @@ func remove[K, V any](tree node[K, V], hash keyt, key K, hasher utils.Hasher[K])
 }
 
 // If the returned flag is true, a and b represent equal trees
-func merge[K, V any](a, b node[K, V], hasher utils.Hasher[K], f mergeFunc[V]) (node[K, V], bool) {
+func merge[K, V any](a, b node[K, V], hasher immutable.Hasher[K], f mergeFunc[V]) (node[K, V], bool) {
 	// Cheap pointer-equality
 	if a == b {
 		return a, true
@@ -421,7 +422,7 @@ func merge[K, V any](a, b node[K, V], hasher utils.Hasher[K], f mergeFunc[V]) (n
 
 type cmpFunc[V any] func(a, b V) bool
 
-func equal[K, V any](a, b node[K, V], hasher utils.Hasher[K], f cmpFunc[V]) bool {
+func equal[K, V any](a, b node[K, V], hasher immutable.Hasher[K], f cmpFunc[V]) bool {
 	if a == b {
 		return true
 	} else if a == nil || b == nil {

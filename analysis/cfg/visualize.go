@@ -14,7 +14,7 @@ import (
 )
 
 /* Creates a Dot Graph representing the program CFG */
-func Visualize(prog *ssa.Program, result *pointer.Result) {
+func (cfg *Cfg) Visualize(result *pointer.Result) {
 	G := &dot.DotGraph{
 		Options: map[string]string{
 			"minlen":  fmt.Sprint(opts.Minlen()),
@@ -42,7 +42,7 @@ func Visualize(prog *ssa.Program, result *pointer.Result) {
 			continue
 		}
 
-		if !addFunctionToVisualizationGraph(G, nodeToDotNode, fun) {
+		if !cfg.addFunctionToVisualizationGraph(G, nodeToDotNode, fun) {
 			log.Printf("CFG for local function %q not present?", fun.Name())
 			continue
 		}
@@ -100,27 +100,11 @@ func Visualize(prog *ssa.Program, result *pointer.Result) {
 }
 
 /* Creates a Dot Graph representing the program CFG */
-func VisualizeFunc(prog *ssa.Program, result *pointer.Result, fun string) {
-	G := &dot.DotGraph{
-		Options: map[string]string{
-			"minlen":  fmt.Sprint(opts.Minlen()),
-			"nodesep": fmt.Sprint(opts.Nodesep()),
-			"rankdir": "TB",
-		},
-	}
-	fmt.Println()
-
-	nodeToDotNode := make(map[Node]*dot.DotNode)
-	// Build visualization only for reachable functions
-	//for fun := range ssautil.AllFunctions(prog) {
-
+func (cfg *Cfg) VisualizeFunc(fun string) {
 	f := cfg.FunctionByName(fun)
-
-	addFunctionToVisualizationGraph(G, nodeToDotNode, f)
-
-	G.ShowDot()
+	cfg.VisualizeFunction(f)
 }
-func VisualizeFunction(fun *ssa.Function) {
+func (cfg *Cfg) VisualizeFunction(fun *ssa.Function) {
 	G := &dot.DotGraph{
 		Options: map[string]string{
 			"minlen":  fmt.Sprint(opts.Minlen()),
@@ -132,14 +116,14 @@ func VisualizeFunction(fun *ssa.Function) {
 
 	nodeToDotNode := make(map[Node]*dot.DotNode)
 
-	if !addFunctionToVisualizationGraph(G, nodeToDotNode, fun) {
+	if !cfg.addFunctionToVisualizationGraph(G, nodeToDotNode, fun) {
 		panic(fmt.Sprintf("CFG for %s does not exist?", fun))
 	}
 
 	G.ShowDot()
 }
 
-func addFunctionToVisualizationGraph(G *dot.DotGraph, nodeToDotNode map[Node]*dot.DotNode, fun *ssa.Function) bool {
+func (cfg *Cfg) addFunctionToVisualizationGraph(G *dot.DotGraph, nodeToDotNode map[Node]*dot.DotNode, fun *ssa.Function) bool {
 	// Assumes that from and to are present in nodeToDotNode
 	addEdge := func(from, to Node, attrs dot.DotAttrs) {
 		G.Edges = append(G.Edges, &dot.DotEdge{

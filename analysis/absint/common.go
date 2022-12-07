@@ -419,7 +419,7 @@ func (p prepAI) prep(
 	isHarnessed bool) AnalysisCtxt {
 
 	// Define analysis entry node
-	entry, _ := loadRes.Cfg.FunIO(entryFun)
+	entry, exit := loadRes.Cfg.FunIO(entryFun)
 	if entry == nil {
 		panic(fmt.Errorf("%v does not have an entry in the CFG", entryFun))
 	}
@@ -441,6 +441,14 @@ func (p prepAI) prep(
 		),
 		Elements().ThreadCharges(),
 	)
+
+	if pkg := entry.Function().Pkg; entry.Function() == pkg.Func("init") {
+		entry, _ := loadRes.Cfg.FunIO(pkg.Func("main"))
+		// Allow init exit to progress to main entry
+		initState = initState.AddCharge(
+			goro, cl.Derive(exit), cl.Derive(entry),
+		)
+	}
 
 	if isHarnessed {
 		vals := make([]loc.AddressableLocation, 0, len(entryFun.Params)+len(entryFun.FreeVars))
@@ -525,7 +533,7 @@ func (C *AnalysisCtxt) FragmentPredicateFromPrimitives(
 	primitiveToUses map[ssa.Value]map[*ssa.Function]struct{},
 ) {
 	loadRes := C.LoadRes
-	scc := loadRes.CallDAG
+	scc := loadRes.PrunedCallDAG
 
 	interestingFunctions := map[*ssa.Function]bool{}
 

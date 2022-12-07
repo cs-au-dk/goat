@@ -4,12 +4,14 @@ import (
 	"fmt"
 	T "go/types"
 	"log"
+	"strings"
 
 	"github.com/cs-au-dk/goat/analysis/cfg"
 	"github.com/cs-au-dk/goat/analysis/defs"
 	L "github.com/cs-au-dk/goat/analysis/lattice"
 	loc "github.com/cs-au-dk/goat/analysis/location"
 	"github.com/cs-au-dk/goat/utils"
+	"github.com/cs-au-dk/goat/utils/graph"
 
 	"golang.org/x/tools/go/ssa"
 )
@@ -168,14 +170,10 @@ func (C AnalysisCtxt) callSuccs(
 	}
 
 	postCall := n.CallRelationNode()
-	newState := state
 
 	// A call node might miss a post-call node if the Andersen pointer analysis knows
 	// that the receiver is nil. I.e. if the call is guaranteed to panic.
 	if postCall != nil {
-		// Add a charge for the post call site
-		newState = state.AddCharges(g, cl.Derive(postCall))
-
 		// First check for skippable method invocations
 		if callIns.Common().IsInvoke() {
 			mem, hasModel := C.stdInvoke(g, callIns, state.Memory())
@@ -237,7 +235,18 @@ func (C AnalysisCtxt) callSuccs(
 		} else {
 			C.Metrics.ExpandFunction(sfun)
 			// Clear the exiting flag when entering a function
-			succs = succs.Update(succ.WithExiting(false), newState.UpdateMemory(newMem))
+			funEntryCl := succ.WithExiting(false)
+			// NOTE: Assumes that FunctionEntry defer link goes to FunctionExit
+			funExitCl := funEntryCl.Derive(funEntryCl.Node().DeferLink())
+			succs = succs.Update(
+				funEntryCl,
+				// Add charged return edge from function exit to postcall node
+				state.UpdateMemory(newMem).AddCharge(
+					g, funExitCl, cl.Derive(postCall),
+				).AddCharge(
+					g, funExitCl.WithExiting(true), cl.Derive(postCall).WithExiting(true),
+				),
+			)
 			expandedFunctions[sfun] = struct{}{}
 		}
 	}
@@ -303,7 +312,7 @@ func (C AnalysisCtxt) transferParams(
 	}
 
 	type callTarget struct {
-		closure L.InfiniteMap
+		closure L.InfiniteMap[any]
 		args    []L.AbstractValue
 	}
 
@@ -399,4 +408,165 @@ func (C AnalysisCtxt) transferParams(
 	}
 
 	return
+}
+
+// Used to make graphs in FunctionExit handling.
+type ctrlLocMapper map[defs.CtrLoc]any
+
+func (m ctrlLocMapper) Set(key defs.CtrLoc, value any) { m[key] = value }
+func (m ctrlLocMapper) Get(key defs.CtrLoc) (any, bool) {
+	v, ok := m[key]
+	return v, ok
+}
+
+func CtrLocMapper() graph.Mapper[defs.CtrLoc] { return ctrlLocMapper(map[defs.CtrLoc]any{}) }
+
+func (C AnalysisCtxt) exitSuccs(
+	g defs.Goro,
+	cl defs.CtrLoc,
+	initState L.AnalysisState,
+) L.AnalysisIntraprocess {
+	succs := Elements().AnalysisIntraprocess()
+	initMem := initState.Memory()
+
+	n := cl.Node()
+	if _, ok := n.(*cfg.FunctionExit); !ok {
+		panic(fmt.Errorf("exitSuccs of %T %v is not supported", n, n))
+	}
+
+	// Only propagate control to charged successors.
+	chargedReturns, _ := initState.ThreadCharges().Get(g)
+	returnEdges := chargedReturns.Edges(cl)
+
+	// Safety check
+	if len(returnEdges) == 0 && n.Function() != cl.Root() && !cl.Panicked() {
+		var buf []string
+		for succ := range cl.Successors() {
+			buf = append(buf, fmt.Sprintf("%s: %s (%s)", succ.Node().Function(), succ, succ.PosString()))
+		}
+		log.Fatalf(
+			"Did not find any charged sites to return to for\n%s (%s)\nPre-analysis return sites:\n%s",
+			cl,
+			cl.PosString(),
+			strings.Join(buf, "\n"),
+		)
+	}
+
+	callDAG := C.LoadRes.CallDAG
+	exitedComponent := callDAG.ComponentOf(n.Function())
+
+	retState := initState
+
+	/* TODO
+	   Abstract GC is disabled because `canGC` is expensive and because
+	   it's hard to judge whether the reduced memory size outweighs the
+	   benefit of not modifying the memory tree structure.
+	if canGC(g, n) {
+		retState = initState.UpdateMemory(abstractGC(g, n.Function(), initMem))
+	}
+	*/
+
+	// NOTE: We cannot use GetUnsafe because goroutines spawned on builtins
+	// get wired up as `builtin -> functionexit` (to trigger goroutine termination).
+	// We instead assert that a return value exists when we actually need it.
+	returnVal, hasReturnVal := initMem.Get(loc.ReturnLocation(g, n.Function()))
+
+	for _, succ := range returnEdges {
+		updatedRetState := retState
+
+		// If we are returning out of a component we can remove charged return
+		// edges for functions that cannot be on the call stack any more.
+		// This includes the charged return edge that we are following in this
+		// iteration of the loop, but it may also include other charged return
+		// edges. Consider:
+		//       >bar
+		//      /     \
+		//  foo        >qux
+		//      \     /
+		//       >baz
+		// foo calls both bar and baz and both of those call qux.
+		// When qux is on the call stack we don't know if bar or baz is on the
+		// call stack (we have no context sensitivity to discern those cases)
+		// so our over-approximation says that both may be on the call stack.
+		// When we return from qux to baz, we must remove the charged return
+		// edges: qux -> baz, qux -> bar, bar -> foo, as it is now impossible
+		// for bar and qux to be on the call stack. There are some
+		// StaticAnalysis tests showing why it is necessary to remove all of
+		// those edges.
+		// This optimisation does not remove butterfly cycles or otherwise
+		// improve precision inside a single intraprocessual fixpoint
+		// computation, as we will end up joining the sets of charged return
+		// edges at function entry if a function is called multiple times.
+		// However, if two calls to the same function are separated by a
+		// communication operation in a synchronizing configuration, we will
+		// have thrown away the state at function entry between the two
+		// fixpoint computations, preventing the join of sets of charged return
+		// edges.
+		// Deciding which return edges to remove is currently done by performing
+		// a graph traversal from the returned to function to discover reachable
+		// charged return edges. Edges that are not reached in this traversal
+		// are thrown away.
+		if callDAG.ComponentOf(succ.Node().Function()) != exitedComponent {
+			reachesRoot := false
+			reachableExits := map[defs.CtrLoc]bool{}
+			graph.Of(CtrLocMapper, func(node defs.CtrLoc) []defs.CtrLoc {
+				// The graph contains FunctionExit nodes in the same component that
+				// can be reached by following charged return edges.
+				// TODO: Think about whether it is necessary to also consider
+				// setting the exiting flag if it isn't already.
+				_, exit := C.LoadRes.Cfg.FunIO(node.Node().Function())
+				// assert edge is not hit
+				if cl.Node() == exit {
+					log.Fatalln(
+						"unexpected cycle. returning from",
+						cl, "to", succ,
+						callDAG.ComponentOf(cl.Node().Function()),
+						callDAG.ComponentOf(succ.Node().Function()),
+					)
+				}
+
+				exitNode := node.Derive(exit)
+				reachableExits[exitNode] = true
+				return chargedReturns.Edges(exitNode)
+			}).BFSV(func(node defs.CtrLoc) bool {
+				if node.Node().Function() == cl.Root() {
+					reachesRoot = true
+				}
+				return false
+			}, succ, succ.WithExiting(true))
+
+			if !reachesRoot { // safety check
+				log.Fatalf("Mistakes were made when returning from %s to %s %v", cl, succ, reachableExits)
+			}
+
+			// Remove all charged return edges from function exit nodes we did not reach
+			newChargedReturns := chargedReturns
+			chargedReturns.ForEach(func(cl defs.CtrLoc, _ L.InfSet[defs.CtrLoc]) {
+				if _, isExit := cl.Node().(*cfg.FunctionExit); isExit && !reachableExits[cl] {
+					newChargedReturns = newChargedReturns.Remove(cl)
+				}
+			})
+
+			updatedRetState = retState.UpdateThreadCharges(
+				retState.ThreadCharges().Update(g, newChargedReturns),
+			)
+		}
+
+		// If the call instruction is a normal call (not defer), we need
+		// to propagate the return value.
+		if ssaNode, ok := succ.Node().CallRelationNode().(*cfg.SSANode); ok {
+			if !hasReturnVal {
+				panic(fmt.Errorf("missing return value when returning from %v", n))
+			}
+
+			value := ssaNode.Instruction().(*ssa.Call)
+			updatedRetState = updatedRetState.UpdateMemory(
+				updatedRetState.Memory().Update(loc.LocationFromSSAValue(g, value), returnVal),
+			)
+		}
+
+		succs = succs.WeakUpdate(succ, updatedRetState)
+	}
+
+	return succs
 }

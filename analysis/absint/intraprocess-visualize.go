@@ -114,6 +114,8 @@ func VisualizeIntraprocess(
 	G.ShowDot()
 }
 
+const StringifyLimit = 1000
+
 func StringifyNodeArguments(g defs.Goro, mem L.Memory, node cfg.Node) (label string) {
 	var ops []ssa.Value
 	if n, ok := node.(*cfg.SSANode); ok {
@@ -134,7 +136,11 @@ func StringifyNodeArguments(g defs.Goro, mem L.Memory, node cfg.Node) (label str
 					}
 				}()
 
-				label += evaluateSSA(g, mem, op).String()
+				ssaString := evaluateSSA(g, mem, op).String()
+				if l := len(ssaString); l > StringifyLimit {
+					ssaString = ssaString[:StringifyLimit-6] + " ... " + ssaString[l-1:]
+				}
+				label += ssaString
 			}()
 			label += "\n"
 		}

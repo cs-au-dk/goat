@@ -27,7 +27,7 @@ func GetCtrLocPriorities(allFuns map[*ssa.Function]struct{}, scc graph.SCCDecomp
 		}
 	}
 
-	// TODO: The pointer analysis and resulting callgraph is not sound, so some
+	// NOTE: The pointer analysis and resulting callgraph is not sound, so some
 	// functions may be missing a priority. Currently we accept that these
 	// functions get negative priority (process first).
 	time = 0

@@ -30,7 +30,7 @@ func (m *WrappedMapElementLattice) WrappedMapElement() *WrappedMapElementLattice
 
 type WrappedMapElement struct {
 	element
-	base baseMap
+	base baseMap[KEYTYPE]
 }
 
 // Map methods
@@ -71,17 +71,17 @@ func (w WrappedMapElement) Remove(key KEYTYPE) WrappedMapElement {
 }
 
 func (w WrappedMapElement) ForEach(f func(KEYTYPE, VALUETYPE)) {
-	w.base.ForEach(func(key interface{}, value Element) {
-		f(key.(KEYTYPE), value.(VALUETYPE))
+	w.base.ForEach(func(key KEYTYPE, value Element) {
+		f(key, value.(VALUETYPE))
 	})
 }
 
 func (w WrappedMapElement) Find(f func(KEYTYPE, VALUETYPE) bool) (zk KEYTYPE, zv VALUETYPE, b bool) {
-	k, e, found := w.base.Find(func(k interface{}, e Element) bool {
-		return f(k.(KEYTYPE), e.(VALUETYPE))
+	k, e, found := w.base.Find(func(k KEYTYPE, e Element) bool {
+		return f(k, e.(VALUETYPE))
 	})
 	if found {
-		return k.(KEYTYPE), e.(VALUETYPE), true
+		return k, e.(VALUETYPE), true
 	}
 	return zk, zv, b
 }

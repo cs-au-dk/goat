@@ -53,53 +53,65 @@ func (t Sync) String() (str string) {
 }
 
 type Close struct {
-	Progressed defs.Goro
-	Op         ssa.Value
+	transitionSingle
+	Op ssa.Value
 }
 
 func (t Close) PrettyPrint() {
-	fmt.Println("Performed close operation", t.Op, "on thread", t.Progressed)
+	fmt.Println("Performed close operation", t.Op, "on thread", t.progressed)
 }
 
 func (t Close) String() (str string) {
-	return t.Progressed.String() + ": ■" + utils.SSAValString(t.Op) + ""
+	return t.progressed.String() + ": ■" + utils.SSAValString(t.Op) + ""
 }
 
 func (t Close) Hash() uint32 {
-	phasher := utils.PointerHasher{}
-	return utils.HashCombine(t.Progressed.Hash(), phasher.Hash(t.Op))
+	phasher := utils.PointerHasher[ssa.Value]{}
+	return utils.HashCombine(t.progressed.Hash(), phasher.Hash(t.Op))
+}
+
+func NewClose(progressed defs.Goro, chn ssa.Value) Close {
+	return Close{transitionSingle{progressed}, chn}
 }
 
 type Receive struct {
-	Progressed defs.Goro
-	Chan       loc.Location
+	transitionSingle
+	Chan loc.Location
 }
 
 func (t Receive) PrettyPrint() {
-	fmt.Println("Performed buffered receive operation on", t.Chan, "on thread", t.Progressed)
+	fmt.Println("Performed buffered receive operation on", t.Chan, "on thread", t.progressed)
 }
 
 func (t Receive) String() (str string) {
-	return t.Progressed.String() + ": ←" + t.Chan.String()
+	return t.progressed.String() + ": ←" + t.Chan.String()
 }
 
 func (t Receive) Hash() uint32 {
-	return utils.HashCombine(t.Progressed.Hash(), t.Chan.Hash())
+	return utils.HashCombine(t.progressed.Hash(), t.Chan.Hash())
+}
+
+func NewReceive(progressed defs.Goro, chn loc.Location) Receive {
+	return Receive{transitionSingle{progressed}, chn}
 }
 
 type Send struct {
-	Progressed defs.Goro
-	Chan       loc.Location
+	transitionSingle
+	Chan loc.Location
 }
 
 func (t Send) PrettyPrint() {
-	fmt.Println("Performed buffered sned operation on", t.Chan, "on thread", t.Progressed)
+	fmt.Println("Performed buffered send operation on", t.Chan, "on thread", t.progressed)
 }
 
 func (t Send) String() (str string) {
-	return t.Progressed.String() + ": " + t.Chan.String() + "←"
+	return t.progressed.String() + ": " + t.Chan.String() + "←"
 }
 
 func (t Send) Hash() uint32 {
-	return utils.HashCombine(t.Progressed.Hash(), t.Chan.Hash())
+	return utils.HashCombine(t.progressed.Hash(), t.Chan.Hash())
+}
+
+func NewSend(progressed defs.Goro, chn loc.Location) Send {
+	return Send{transitionSingle{progressed}, chn}
 }

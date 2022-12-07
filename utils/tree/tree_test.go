@@ -7,8 +7,8 @@ import (
 	"github.com/benbjohnson/immutable"
 )
 
-var intHasher = immutable.NewHasher(int(0))
-var uint32Hasher = immutable.NewHasher(uint32(0))
+var intHasher = immutable.NewHasher[any](int(0))
+var uint32Hasher = immutable.NewHasher[any](uint32(0))
 
 type tree = Tree[any, any]
 
@@ -77,7 +77,7 @@ func mkMemHasher(limit int) memHasher {
 }
 
 func TestSameKey(t *testing.T) {
-	for _, hasher := range []immutable.Hasher{intHasher, badHasher{}} {
+	for _, hasher := range []immutable.Hasher[any]{intHasher, badHasher{}} {
 		hit, miss := mkTest(t)
 		tree0 := NewTree[any, any](hasher)
 		tree1 := tree0.Insert(0, "v1")
@@ -154,7 +154,7 @@ func TestHistory(t *testing.T) {
 	hit, miss := mkTest(t)
 	N := 100
 
-	for _, hasher := range []immutable.Hasher{intHasher, mkMemHasher(N / 5)} {
+	for _, hasher := range []immutable.Hasher[any]{intHasher, mkMemHasher(N / 5)} {
 		tree := NewTree[any, any](hasher)
 		history := []Tree[any, any]{tree}
 
@@ -189,7 +189,7 @@ func max(a, b interface{}) (interface{}, bool) {
 
 func TestSimpleMerge(t *testing.T) {
 	hit, _ := mkTest(t)
-	for _, hasher := range []immutable.Hasher{intHasher, badHasher{}, mkMemHasher(2)} {
+	for _, hasher := range []immutable.Hasher[any]{intHasher, badHasher{}, mkMemHasher(2)} {
 		a := NewTree[any, any](hasher).Insert(0, 1).Insert(1, 1)
 		b := NewTree[any, any](hasher).Insert(1, 2).Insert(2, 2)
 
@@ -246,7 +246,7 @@ func TestManyMerge(t *testing.T) {
 	N := 100
 
 	for iter := 0; iter < iterations; iter++ {
-		for _, hasher := range []immutable.Hasher{intHasher, mkMemHasher(N / 5)} {
+		for _, hasher := range []immutable.Hasher[any]{intHasher, mkMemHasher(N / 5)} {
 			a, b := NewTree[any, any](hasher), NewTree[any, any](hasher)
 
 			mp := make([]int, 2*N)

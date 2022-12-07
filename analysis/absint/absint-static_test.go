@@ -7,10 +7,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cs-au-dk/goat/analysis/cfg"
 	"github.com/cs-au-dk/goat/analysis/defs"
 	L "github.com/cs-au-dk/goat/analysis/lattice"
-	"github.com/cs-au-dk/goat/analysis/location"
+	loc "github.com/cs-au-dk/goat/analysis/location"
 	tu "github.com/cs-au-dk/goat/testutil"
+	"github.com/cs-au-dk/goat/utils"
+	"github.com/cs-au-dk/goat/utils/graph"
 
 	"github.com/benbjohnson/immutable"
 )
@@ -72,7 +75,7 @@ func runTest(
 	t.Logf("Abstract configuration graph contains %d superlocations.", result.Size())
 
 	// Compute some stats on how many superlocations we visit out of the total possible
-	goroToClCount := defs.NewGoroutineMap()
+	goroToClCount := utils.NewImmMap[defs.Goro, *immutable.Map[defs.CtrLoc, int]]()
 	visited := 0
 	S.ForEach(func(conf *AbsConfiguration) {
 		if conf.IsPanicked() || !conf.IsSynchronizing(C, result.GetUnsafe(conf.Superlocation())) {
@@ -82,18 +85,12 @@ func runTest(
 		visited++
 
 		conf.ForEach(func(g defs.Goro, cl defs.CtrLoc) {
-			var prevCnt *immutable.Map
-			if prevCntItf, ok := goroToClCount.Get(g); ok {
-				prevCnt = prevCntItf.(*immutable.Map)
-			} else {
-				prevCnt = defs.NewControllocationMap()
+			prevCnt, ok := goroToClCount.Get(g)
+			if !ok {
+				prevCnt = utils.NewImmMap[defs.CtrLoc, int]()
 			}
 
-			pCnt := 0
-			if pCntItf, ok := prevCnt.Get(cl); ok {
-				pCnt = pCntItf.(int)
-			}
-
+			pCnt, _ := prevCnt.Get(cl)
 			goroToClCount = goroToClCount.Set(g, prevCnt.Set(cl, pCnt+1))
 		})
 	})
@@ -101,12 +98,11 @@ func runTest(
 	if visited > 0 {
 		totalPossible := 1
 		for iter := goroToClCount.Iterator(); !iter.Done(); {
-			_, v := iter.Next()
-			clCnt := v.(*immutable.Map)
+			_, clCnt, _ := iter.Next()
 			presentCnt := 0
 			for iter := clCnt.Iterator(); !iter.Done(); {
-				_, v := iter.Next()
-				presentCnt += v.(int)
+				_, v, _ := iter.Next()
+				presentCnt += v
 			}
 
 			myPossible := clCnt.Len()
@@ -176,7 +172,7 @@ func ChannelValueQueryTests(
 					}
 
 					mem := as.Memory()
-					errStr := func(al location.AllocationSiteLocation, val L.Element) string {
+					errStr := func(al loc.AllocationSiteLocation, val L.Element) string {
 						return fmt.Sprintf("Expected `%s` field of channel %s to be: %s\n"+
 							"Instead found: %s\n"+
 							"Goroutine: %s\n"+
@@ -189,8 +185,8 @@ func ChannelValueQueryTests(
 						)
 					}
 
-					mem.ForEach(func(al location.AddressableLocation, av L.AbstractValue) {
-						asl, ok := al.(location.AllocationSiteLocation)
+					mem.ForEach(func(al loc.AddressableLocation, av L.AbstractValue) {
+						asl, ok := al.(loc.AllocationSiteLocation)
 						if !ok {
 							return
 						}
@@ -283,7 +279,7 @@ func TestStaticAnalysis(t *testing.T) {
 		}, {
 			"make-buff-chan-const",
 			`func main() {
-				_ = make(chan int, 1)` + at(
+				<-make(chan int, 1)` + at(
 				ann.Chan(ch1),
 				ann.ChanQuery(ch1, tu.QRY_MULTIALLOC, false),
 				ann.ChanQuery(ch1, tu.QRY_CAP, 1),
@@ -318,7 +314,7 @@ func TestStaticAnalysis(t *testing.T) {
 		}, {
 			"gowner-test",
 			at(ann.Goro(goro(1), true, root, go1)) + `
-			
+
 			func main() {
 				go func() {` + at(ann.Go(go1)) + `
 					ch1 := make(chan string)` + at(ann.Chan(ch1)) + `
@@ -349,7 +345,7 @@ func TestStaticAnalysis(t *testing.T) {
 			}
 
 			func main() {
-				ch := make(chan string, 2)` + at(ann.Chan(ch1)) + ` 
+				ch := make(chan string, 2)` + at(ann.Chan(ch1)) + `
 				go func() {` + at(ann.Go(go1)) + `
 					exec(ch, "first")
 					go func() {` + at(ann.Go(go2)) + `
@@ -379,6 +375,150 @@ func TestStaticAnalysis(t *testing.T) {
 			}`,
 			nil,
 		},
+		{
+			// Reproducer for the charge removal issue previously described in
+			// absint.go for FunctionExit.
+			"no-charged-return-issue",
+			`func h() {}
+			func g() { h() }
+			func f() { h(); g() }
+
+			func main() {
+				f()
+				// The call site in f calling h is still charged due to
+				// being propagated on return from h to g.
+				make(chan int, 1) <- 0  // Reset information at function entries
+				// The return from h returns into f (and main), but f cannot return to main
+				// as the call site in main to f is not charged.
+				h()
+			}`,
+			nil,
+		},
+		{
+			// Reproducer showing why need to remove all charged edges leaving
+			// the exiting component, not just the ones from the exiting function.
+			"no-charged-return-issue-cycle",
+			`func isEven(x int) bool {
+				if x == 0 {
+					return true
+				}
+				return isOdd(x-1)
+			}
+			func isOdd(x int) bool {
+				if x == 0 {
+					return false
+				}
+				return isEven(x-1)
+			}
+			func g() { isOdd(10) }
+			func f() { isEven(10); g() }
+
+			func main() {
+				f()
+				// The call site in f calling isEven shouldn't be charged here
+				make(chan int, 1) <- 0  // Reset information
+				isEven(12)
+			}`,
+			nil,
+		},
+		{
+			// We should be careful to only remove edges when returning out of a component...
+			"no-charged-return-issue-cycle-2",
+			`func isEven(x int) bool {
+				if x == 0 {
+					return true
+				}
+				return isOdd(x-1)
+			}
+			func isOdd(x int) bool {
+				if x == 0 {
+					return false
+				}
+				ans := isEven(x-1)
+				// Since isEven returns into the component {isEven, isOdd}, we
+				// shouldn't remove the charged return edge isEven -> main.
+				make(chan int, 1) <- 0 // Reset information
+				return ans
+			}
+			func main() { isEven(10) }`,
+			nil,
+		},
+		{
+			"no-charged-return-issue-lca",
+			`func a() { b(); c() }
+			func b() { d() }
+			func c() { d() }
+			func d() { }
+			func main() {
+				a()
+				make(chan int, 1) <- 0
+				b()
+			}`,
+			nil,
+		},
+		{
+			"remove-charged-return-increases-precision",
+			`var x int
+			func f() {}
+			func main() {
+				f()
+				x = 10
+				make(chan int, 1) <- 0  // reset stored information at f-entry
+				f()
+			}`,
+			func(
+				t *testing.T,
+				C AnalysisCtxt,
+				A L.Analysis,
+				S SuperlocGraph,
+				_ tu.NotesManager,
+			) {
+				anyFound := false
+				global := C.Function.Pkg.Var("x")
+				if global == nil {
+					t.Fatal("No global named 'x'")
+				}
+
+				A.ForEach(func(sl defs.Superloc, a L.AnalysisState) {
+					sl.ForEach(func(_ defs.Goro, cl defs.CtrLoc) {
+						if _, ok := cl.Node().(*cfg.TerminateGoro); ok {
+							anyFound = true
+							val := a.Memory().GetUnsafe(loc.GlobalLocation{Site: global})
+							if !val.Eq(L.Elements().AbstractBasic(int64(10))) {
+								t.Errorf("Expected 'x' %v = 10", val)
+							}
+						}
+					})
+				})
+
+				if !anyFound {
+					t.Error("Didn't find a superlocation where the goroutine terminated.")
+				}
+			},
+		},
+		{
+			// This example shows why it is necessary to store return edges (with from and to)
+			// instead of only return "points" (to only)
+			// (assuming that all charged returns from a function are removed when it returns).
+			"subtle-charged-return-example",
+			`func ubool() bool
+			func h() {}
+			func g() {
+				h()
+				make(chan int, 1) <- 0
+			}
+			func main() {
+				f := h
+				if ubool() { f = g }
+				f()
+			}`,
+			nil,
+		},
+		{
+			"charged-return-sound-callgraph",
+			chargedReturnSoundCallgraphProgram,
+			nil,
+		},
 	}
 
 	for _, test := range tests {
@@ -387,6 +527,45 @@ func TestStaticAnalysis(t *testing.T) {
 		})
 	}
 }
+
+var chargedReturnSoundCallgraphProgram = func() string {
+	aFuns := []string{}
+	aNames := []string{}
+	aCalls := []string{}
+	for i := 0; i < graph.CGPruneLimit+1; i++ {
+		name := fmt.Sprintf("a_%d", i)
+		aFuns = append(aFuns, fmt.Sprintf(`
+func %s(f func(chan int)) {
+	f(nil)
+}`, name))
+		aCalls = append(aCalls, name+"(f)")
+		aNames = append(aNames, name)
+	}
+
+	return fmt.Sprintf(`
+%s
+
+var as = []func(func(chan int)){ %s }
+
+func f(ch chan int) {
+	if !guard {
+		guard = true
+		as[0](f)
+	}
+	ch <- 10
+}
+
+var guard = false
+func main() {
+	if guard {
+		%s
+	}
+
+	ch := make(chan int, 10)
+	f(ch)
+}
+`, strings.Join(aFuns, "\n"), strings.Join(aNames, ", "), strings.Join(aCalls, "; "))
+}()
 
 func TestPOR(t *testing.T) {
 	var PORTest absIntCommTestFunc = func(t *testing.T, C AnalysisCtxt,

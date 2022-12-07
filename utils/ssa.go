@@ -198,7 +198,7 @@ func TypeHasConcurrencyPrimitives(typ types.Type, visited map[types.Type]struct{
 }
 
 type SSAValueSet struct {
-	*immutable.Map
+	*immutable.Map[ssa.Value, struct{}]
 }
 
 func (s SSAValueSet) Size() int {
@@ -206,7 +206,7 @@ func (s SSAValueSet) Size() int {
 }
 
 func MakeSSASet(vs ...ssa.Value) SSAValueSet {
-	mp := immutable.NewMap(PointerHasher{})
+	mp := immutable.NewMap[ssa.Value, struct{}](PointerHasher[ssa.Value]{})
 	for _, v := range vs {
 		mp = mp.Set(v, struct{}{})
 	}
@@ -226,8 +226,10 @@ func (s1 SSAValueSet) Join(s2 SSAValueSet) SSAValueSet {
 	}
 
 	for iter := s1.Iterator(); !iter.Done(); {
-		next, _ := iter.Next()
-		s2.Map = s2.Map.Set(next, struct{}{})
+		v, _, _ := iter.Next()
+		if !s2.Contains(v) {
+			s2.Map = s2.Map.Set(v, struct{}{})
+		}
 	}
 
 	return s2
@@ -256,8 +258,8 @@ func (s1 SSAValueSet) Meet(s2 SSAValueSet) SSAValueSet {
 
 func (s SSAValueSet) ForEach(do func(ssa.Value)) {
 	for iter := s.Iterator(); !iter.Done(); {
-		next, _ := iter.Next()
-		do(next.(ssa.Value))
+		next, _, _ := iter.Next()
+		do(next)
 	}
 }
 
@@ -324,7 +326,7 @@ func (ssaValueSetHasher) Hash(s SSAValueSet) uint32 {
 
 	hashes := make([]uint32, 0, s.Size())
 	for _, v := range vs {
-		hashes = append(hashes, PointerHasher{}.Hash(v))
+		hashes = append(hashes, PointerHasher[ssa.Value]{}.Hash(v))
 	}
 
 	return HashCombine(hashes...)
@@ -338,14 +340,14 @@ func (ssaValueSetHasher) Equal(a, b SSAValueSet) bool {
 	}
 
 	for it := a.Map.Iterator(); !it.Done(); {
-		if k, _ := it.Next(); !b.Contains(k.(ssa.Value)) {
+		if k, _, _ := it.Next(); !b.Contains(k) {
 			return false
 		}
 	}
 	return true
 }
 
-var SSAValueSetHasher Hasher[SSAValueSet] = ssaValueSetHasher{}
+var SSAValueSetHasher immutable.Hasher[SSAValueSet] = ssaValueSetHasher{}
 
 func PrintSSAFun(fun *ssa.Function) {
 	fmt.Println(fun.Name())

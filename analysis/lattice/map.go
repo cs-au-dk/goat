@@ -2,64 +2,63 @@ package lattice
 
 import (
 	"fmt"
-	"sort"
-
-	i "github.com/cs-au-dk/goat/utils/indenter"
 
 	"github.com/benbjohnson/immutable"
 )
 
-type MapBase struct {
-	element
-	mp elementMap
+type Map[K any] struct {
+	baseMap[K]
 }
 
-type Map struct {
-	MapBase
-}
-
-func newMap(lat Lattice) Map {
+func newMap[K any](lat Lattice) Map[K] {
 	// Should always be safe
-	mapLat := lat.Map()
-	mp := immutable.NewMapBuilder(nil)
+	mapLat := lat.(*MapLattice[K])
+	mp := immutable.NewMapBuilder[K, Element](nil)
 	for x := range mapLat.dom {
-		mp.Set(x, mapLat.rng.Bot())
+		mp.Set(x.(K), mapLat.rng.Bot())
 	}
-	return Map{
-		MapBase{
+	return Map[K]{
+		baseMap[K]{
 			element{mapLat},
-			elementMap{mp.Map()},
+			mp.Map(),
 		},
 	}
 }
 
-func (elementFactory) Map(lat Lattice) func(bindings map[interface{}]Element) Map {
+//func (elementFactory) Map(lat Lattice) func(bindings map[interface{}]Element) Map[K] {
+func MakeMap[K any](lat Lattice) func(bindings map[any]Element) Map[K] {
 	switch lat := lat.(type) {
-	case *MapLattice:
-		return func(bindings map[interface{}]Element) Map {
-			el := newMap(lat)
+	case *MapLattice[K]:
+		return func(bindings map[interface{}]Element) Map[K] {
+			el := newMap[K](lat)
 
 			for x, y := range bindings {
 				if !y.Lattice().Eq(lat.rng) {
 					panic(errUnsupportedTypeConversion)
 				}
-				el.mp = el.mp.set(x, y)
+				el.mp = el.mp.Set(x.(K), y)
 			}
 
 			return el
 		}
 	case *Lifted:
-		return elFact.Map(lat.Lattice)
+		return MakeMap[K](lat.Lattice)
 	case *Dropped:
-		return elFact.Map(lat.Lattice)
+		return MakeMap[K](lat.Lattice)
 	default:
 		panic("Attempted creating map with a non-map lattice")
 	}
 }
 
-func (e MapBase) String() string {
+/*
+type MapBase[K any] struct {
+	element
+	mp elementMap[K]
+}
+
+func (e MapBase[K]) String() string {
 	strs := []string{}
-	e.mp.foreach(func(x interface{}, y Element) {
+	e.mp.foreach(func(x K, y Element) {
 		if !y.eq(y.Lattice().Bot()) {
 			strs = append(strs, fmt.Sprintf("%v ↦  %s", x, y))
 		}
@@ -75,14 +74,13 @@ func (e MapBase) String() string {
 		End("]")
 }
 
-func (m MapBase) Height() (h int) {
-	m.mp.foreach(func(key interface{}, e Element) {
-		var getRngLat func(Lattice) Lattice
-		getRngLat = func(l Lattice) Lattice {
+func (m MapBase[K]) Height() (h int) {
+	m.mp.foreach(func(key K, e Element) {
+		getRngLat := func(l Lattice) Lattice {
 			switch l := l.(type) {
-			case *MapLattice:
+			case *MapLattice[K]:
 				return l.rng
-			case *InfiniteMapLattice:
+			case *InfiniteMapLattice[K]:
 				return l.rng
 			}
 			return nil
@@ -100,21 +98,20 @@ func (m MapBase) Height() (h int) {
 	return
 }
 
-func (e Map) Map() Map {
-	return e
+func (m MapBase[K]) Size() int {
+	return m.mp.Len()
 }
+*/
 
-func (e1 Map) Geq(e2 Element) bool {
+func (e1 Map[K]) Geq(e2 Element) bool {
 	checkLatticeMatch(e1.Lattice(), e2.Lattice(), "⊒")
 	return e1.geq(e2)
 }
 
-func (e1 Map) geq(e2 Element) (result bool) {
+func (e1 Map[K]) geq(e2 Element) (result bool) {
 	switch e2 := e2.(type) {
-	case Map:
-		return e1.mp.forall(func(k interface{}, e Element) bool {
-			return e.geq(e2.Get(k))
-		})
+	case Map[K]:
+		return e1.baseMap.geq(e2.baseMap)
 	case *LiftedBot:
 		return true
 	case *DroppedTop:
@@ -124,17 +121,15 @@ func (e1 Map) geq(e2 Element) (result bool) {
 	}
 }
 
-func (e1 Map) Leq(e2 Element) bool {
+func (e1 Map[K]) Leq(e2 Element) bool {
 	checkLatticeMatch(e1.Lattice(), e2.Lattice(), "⊑")
 	return e1.leq(e2)
 }
 
-func (e1 Map) leq(e2 Element) (result bool) {
+func (e1 Map[K]) leq(e2 Element) (result bool) {
 	switch e2 := e2.(type) {
-	case Map:
-		return e1.mp.forall(func(k interface{}, e Element) bool {
-			return e.leq(e2.Get(k))
-		})
+	case Map[K]:
+		return e1.baseMap.leq(e2.baseMap)
 	case *LiftedBot:
 		return false
 	case *DroppedTop:
@@ -144,26 +139,27 @@ func (e1 Map) leq(e2 Element) (result bool) {
 	}
 }
 
-func (e1 Map) Eq(e2 Element) bool {
+func (e1 Map[K]) Eq(e2 Element) bool {
 	checkLatticeMatch(e1.Lattice(), e2.Lattice(), "=")
 	return e1.eq(e2)
 }
 
-func (e1 Map) eq(e2 Element) bool {
-	if e1 == e2 {
-		return true
+func (e1 Map[K]) eq(e2 Element) bool {
+	if e2, ok := e2.(Map[K]); ok {
+		return e1.baseMap.eq(e2.baseMap)
 	}
-	return e1.geq(e2) && e1.leq(e2)
+
+	return false
 }
 
-func (e1 Map) Join(e2 Element) Element {
+func (e1 Map[K]) Join(e2 Element) Element {
 	checkLatticeMatch(e1.Lattice(), e2.Lattice(), "⊔")
 	return e1.join(e2)
 }
 
-func (e1 Map) join(e2 Element) Element {
+func (e1 Map[K]) join(e2 Element) Element {
 	switch e2 := e2.(type) {
-	case Map:
+	case Map[K]:
 		return e1.MonoJoin(e2)
 	case *LiftedBot:
 		return e1
@@ -174,25 +170,19 @@ func (e1 Map) join(e2 Element) Element {
 	}
 }
 
-func (e1 Map) MonoJoin(e2 Map) Map {
-	e3 := newMap(e1.lattice)
-	e1.mp.foreach(func(key interface{}, e Element) {
-		e3.mp = e3.mp.set(
-			key,
-			e1.Get(key).join(e2.Get(key)),
-		)
-	})
-	return e3
+func (e1 Map[K]) MonoJoin(e2 Map[K]) Map[K] {
+	e1.baseMap = e1.baseMap.MonoJoin(e2.baseMap)
+	return e1
 }
 
-func (e1 Map) Meet(e2 Element) Element {
+func (e1 Map[K]) Meet(e2 Element) Element {
 	checkLatticeMatch(e1.lattice, e2.Lattice(), "⊓")
 	return e1.meet(e2)
 }
 
-func (e1 Map) meet(e2 Element) Element {
+func (e1 Map[K]) meet(e2 Element) Element {
 	switch e2 := e2.(type) {
-	case Map:
+	case Map[K]:
 		return e1.MonoMeet(e2)
 	case *LiftedBot:
 		return e2
@@ -203,46 +193,31 @@ func (e1 Map) meet(e2 Element) Element {
 	}
 }
 
-func (e1 Map) MonoMeet(e2 Map) Map {
-	e3 := newMap(e1.lattice)
-	e1.mp.foreach(func(key interface{}, e Element) {
-		e3.mp = e3.mp.set(
-			key,
-			e1.Get(key).meet(e2.Get(key)),
-		)
-	})
-	return e3
-
+func (e1 Map[K]) MonoMeet(e2 Map[K]) Map[K] {
+	e1.baseMap = e1.baseMap.MonoMeet(e2.baseMap)
+	return e1
 }
 
-func (e Map) Get(x interface{}) Element {
-	mapLat := e.Lattice().Map()
+func (e Map[K]) Get(x K) Element {
+	mapLat := e.Lattice().(*MapLattice[K])
 	if _, ok := mapLat.dom[x]; !ok {
-		panic(fmt.Sprintf("%s is not part of the domain of map lattice:\n%s", x, mapLat))
+		panic(fmt.Sprintf("%v is not part of the domain of map lattice:\n%s", x, mapLat))
 	}
-	return e.mp.getUnsafe(x)
+	return e.GetUnsafe(x)
 }
 
-func (e1 Map) Update(x interface{}, e2 Element) Map {
-	mapLat := e1.Lattice().Map()
+func (e1 Map[K]) Update(x K, e2 Element) Map[K] {
+	mapLat := e1.Lattice().(*MapLattice[K])
 	if _, ok := mapLat.dom[x]; !ok {
-		panic(fmt.Sprintf("%s is not part of the domain of map lattice:\n%s", x, mapLat))
+		panic(fmt.Sprintf("%v is not part of the domain of map lattice:\n%s", x, mapLat))
 	}
 	checkLatticeMatchThunked(mapLat.rng, e2.Lattice(), func() string {
-		return fmt.Sprintf("%s[ %s ↦  %s ]", e1, x, e2)
+		return fmt.Sprintf("%s[ %v ↦  %s ]", e1, x, e2)
 	})
 	return e1.update(x, e2)
 }
 
-func (e1 Map) update(x interface{}, e2 Element) Map {
-	e1.mp = e1.mp.set(x, e2)
+func (e1 Map[K]) update(x K, e2 Element) Map[K] {
+	e1.baseMap = e1.baseMap.Update(x, e2)
 	return e1
-}
-
-func (e Map) ForEach(f func(interface{}, Element)) {
-	e.mp.foreach(f)
-}
-
-func (e Map) ForAll(f func(interface{}, Element) bool) bool {
-	return e.mp.forall(f)
 }

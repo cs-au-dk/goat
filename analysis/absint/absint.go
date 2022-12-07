@@ -319,7 +319,7 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 			cfg.PrintNodePosition(cl.Node(), C.LoadRes.Cfg.FileSet())
 
 			if opts.Visualize() {
-				cfg.VisualizeFunction(cl.Node().Function())
+				C.LoadRes.Cfg.VisualizeFunction(cl.Node().Function())
 			}
 
 			panic(err)
@@ -355,15 +355,15 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 
 	// Filter the set of successors such that we only proceed to "charged" defer calls
 	filterDeferSuccessors := func() (ret []defs.CtrLoc) {
-		charged, _ := initState.ThreadCharges().Get(g)
+		charges, _ := initState.ThreadCharges().Get(g)
 		for succ := range cl.Successors() {
 			ok := true
 			switch n := succ.Node().(type) {
 			case *cfg.DeferCall:
-				_, ok = charged.Get(succ)
+				ok = charges.HasEdge(cl, succ)
 			case *cfg.BuiltinCall:
 				if n.IsDeferred() {
-					_, ok = charged.Get(succ)
+					ok = charges.HasEdge(cl, succ)
 				}
 			}
 
@@ -438,96 +438,7 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 	case *cfg.FunctionEntry:
 		succs = succs.Update(cl.Successor(), initState)
 	case *cfg.FunctionExit:
-		anyFound := false
-		// Only propagate control to charged successors.
-		charged, _ := initState.ThreadCharges().Get(g)
-		//callDAG := C.LoadRes.CallDAG
-		retState := initState
-
-		/* TODO
-		   Abstract GC is disabled because `canGC` is expensive and because
-		   it's hard to judge whether the reduced memory size outweighs the
-		   benefit of not modifying the memory tree structure.
-		if canGC(g, n) {
-			retState = initState.UpdateMemory(abstractGC(g, n.Function(), initMem))
-		}
-		*/
-
-		// NOTE: We cannot use GetUnsafe because goroutines spawned on builtins
-		// get wired up as `builtin -> functionexit` (to trigger goroutine termination).
-		// We instead assert that a return value exists when we actually need it.
-		returnVal, hasReturnVal := initMem.Get(loc.ReturnLocation(g, n.Function()))
-
-		for succ := range cl.Successors() {
-			// Workaround for letting init function-exit progress to main function-entry
-			if sNode, isEntry := succ.Node().(*cfg.FunctionEntry); isEntry &&
-				n.Function().Name() == "init" && sNode.Function().Name() == "main" {
-				anyFound = true
-				succs = succs.Update(succ, retState)
-			} else {
-				for _, succExiting := range [...]bool{false, true} {
-					// Check if a charged successor exists with either value of the exiting flag
-					succ := succ.WithExiting(succExiting)
-					if _, found := charged.Get(succ); found {
-						anyFound = true
-						updatedRetState := retState
-
-						// If the call instruction is a normal call (not defer), we need
-						// to propagate the return value.
-						if ssaNode, ok := succ.Node().CallRelationNode().(*cfg.SSANode); ok {
-							if !hasReturnVal {
-								panic(fmt.Errorf("missing return value when returning from %v", n))
-							}
-
-							value := ssaNode.Instruction().(*ssa.Call)
-							updatedRetState = updatedRetState.UpdateMemory(
-								updatedRetState.Memory().Update(loc.LocationFromSSAValue(g, value), returnVal),
-							)
-						}
-
-						// We can remove the charged post-call node from the state if we know that the
-						// function we are returning from (exiting out of) is guaranteed to not be
-						// on the call stack after returning.
-						// This does not remove butterfly cycles or otherwise improve precision inside
-						// a single intraprocessual fixpoint computation, as we will end up joining
-						// the sets of charged post-call nodes at function entry if a function is
-						// called multiple times. However, if two calls to the same function are separated
-						// by a communication operation in a synchronizing configuration, we will have
-						// thrown away the state at function entry between the two fixpoint computations,
-						// preventing the join of sets of charged post-call nodes.
-						// If the two functions are in different components in the SCC convolution of the
-						// call graph, the exited function cannot be on the call stack after return.
-						// NOTE: This should probably be done a non-pruned (sounder) call graph.
-						/* TODO: Disabled because the below safety check starting getting triggered in
-						    some cases. Try for instance GoKer/grpc/862. I am not sure why it happens
-							and we do not have time to investigate it and fix it.
-							I suspect there may be a problem with charging single nodes instead of
-							charging return edges (from function exit to post-call), since this allows
-							a function to return to a post-call node that never called it.
-						if callDAG.ComponentOf(n.Function()) != callDAG.ComponentOf(succ.Node().Function()) {
-							updatedRetState = updatedRetState.UpdateThreadCharges(
-								updatedRetState.ThreadCharges().Update(g, charged.Remove(succ)),
-							)
-						}
-						*/
-
-						// If the exiting flag is true at FunctionExit, we should propagate
-						// it no matter the value of the flag in the charged CtrLoc.
-						if !succExiting && cl.Exiting() {
-							succ = succ.WithExiting(true)
-						}
-
-						succs = succs.WeakUpdate(succ, updatedRetState)
-					}
-				}
-			}
-		}
-
-		// Safety check
-		if !anyFound && cl.Node().Function() != cl.Root() && !cl.Panicked() {
-			log.Println("Did not find any charged sites to return to?", cl)
-		}
-
+		succs = C.exitSuccs(g, cl, initState)
 	case *cfg.PostCall:
 		if cl.Exiting() {
 			// If the exiting flag is set we should immediately begin processing deferred calls.
@@ -676,8 +587,12 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 			// the defer operation will not have a defer link.
 			if dfr := n.DeferLink(); dfr != nil {
 				// Charge deferlink in both exiting and non-exiting states
-				ncl := cl.Derive(dfr)
-				newState = initState.AddCharges(g, ncl.WithExiting(false), ncl.WithExiting(true))
+				for pred := range dfr.Predecessors() {
+					for _, exiting := range [...]bool{false, true} {
+						from := cl.Derive(pred).WithExiting(exiting)
+						newState = newState.AddCharge(g, from, from.Derive(dfr))
+					}
+				}
 			}
 
 			succs = succs.Update(cl.Successor(), newState)
@@ -712,8 +627,13 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 			case *ssa.MakeChan:
 				C.Metrics.AddChan(cl)
 				capValue := evaluateSSA(g, mops.Memory(), val.Size).BasicValue()
-				if !(capValue.IsBot() || capValue.IsTop()) {
-					// Convert from *flatElement to *FlatIntElement
+				// Convert from constant prop. lattice to flat int lattice
+				switch {
+				case capValue.IsBot():
+					capValue = Lattices().FlatInt().Bot().Flat()
+				case capValue.IsTop():
+					capValue = Lattices().FlatInt().Top().Flat()
+				default:
 					capValue = Elements().FlatInt(int(capValue.Value().(int64)))
 				}
 
@@ -747,15 +667,25 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 					res = L.TopValueForType(insn.Type())
 
 				default:
-					x := evaluateSSA(g, initMem, val.X)
-					res = A.UnOp(x, val)
+					res = A.UnOp(evalSSA(initMem, val.X), val)
 				}
 
 			case *ssa.BinOp:
-				// No wildcard swap because it is unlikely to improve precision.
-				// (Which can only happen if the wildcard represents 0 allocation sites).
-				x, y := evalSSA(initMem, val.X), evalSSA(initMem, val.Y)
-				res = A.BinOp(initMem, x, y, val)
+				x, smem := swapWildcard(initMem, val.X)
+				y, smem := swapWildcard(smem, val.Y)
+				res = A.BinOp(smem, x, y, val)
+
+				if res.IsBot() {
+					// Division / modulo by zero
+					succs = succs.Update(cl.Panic(), initState)
+					break
+				}
+
+				// Only accept increased memory size from wildcard swaps if we
+				// gain branch precision.
+				if !res.BasicValue().IsTop() {
+					mops = L.MemOps(smem)
+				}
 
 				/*
 					Special case loops guards for loops over slices to avoid false positives
@@ -786,7 +716,7 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 					ptNil := Elements().AbstractPointerV(loc.NilLocation{})
 					if blt, ok := call.Call.Value.(*ssa.Builtin); ok &&
 						blt.Name() == "len" && isIf &&
-						!evaluateSSA(g, initMem, call.Call.Args[0]).Eq(ptNil) {
+						!evalSSA(initMem, call.Call.Args[0]).Eq(ptNil) {
 						res = Elements().AbstractBasic(true)
 					}
 				}
@@ -937,8 +867,10 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 					typ := val.Tuple.Type().(*T.Tuple)
 					TOP := L.TopValueForType(typ.At(val.Index).Type())
 					res = TOP
-				case L.InfiniteMap:
+				case L.InfiniteMap[any]:
 					res = strukt.Get(val.Index).AbstractValue()
+				default:
+					panic("???")
 				}
 
 			case *ssa.ChangeType:
@@ -1016,39 +948,34 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 				v, mem := swapWildcard(initMem, val.X)
 				mops = L.MemOps(mem)
 				okV := L.Consts().BotValue()
-				zeroVal := L.ZeroValueForType(val.AssertedType)
 
 				fbases := v.PointerValue().FilterNilCB(func() {
-					// Obs: Join not needed since we're overriding L.Consts().BotValue
-					res = zeroVal
 					okV = makeConstant(false)
 				})
 
 				isInterfaceAssert := T.IsInterface(val.AssertedType)
-
-				for _, ptr := range fbases.Entries() {
+				filtered := fbases.Filter(func(ptr loc.Location) bool {
 					site, hasSite := ptr.GetSite()
 					if !hasSite {
 						log.Fatalln("Pointer in TypeAssert has no site?", ptr)
 					}
 
-					success := false
+					makeItf, ok := site.(*ssa.MakeInterface)
+					if !ok {
+						log.Fatalln("Allocation site did not come from a MakeInterface instruction?")
+					}
+
+					dynType := makeItf.X.Type()
+
+					var success bool
 					if !isInterfaceAssert {
 						/* If AssertedType is a concrete type, TypeAssert
 						* checks whether the dynamic type in interface X is
 						* equal to it, and if so, the result of the conversion
 						* is a copy of the value in the interface. */
 
-						makeItf, ok := site.(*ssa.MakeInterface)
-						if !ok {
-							log.Fatalln("Allocation site did not come from a MakeInterface instruction?")
-						}
-
 						// Should we maybe use IdenticalIgnoreTags instead?
-						success = T.Identical(val.AssertedType, makeItf.X.Type())
-						if success {
-							res = res.MonoJoin(mops.GetUnsafe(ptr))
-						}
+						success = T.Identical(val.AssertedType, dynType)
 					} else {
 						/* If AssertedType is an interface, TypeAssert checks
 						* whether the dynamic type of the interface is
@@ -1059,24 +986,33 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 						* with ChangeInterface, which performs no nil-check.)
 						* */
 
-						success = T.AssignableTo(site.Type(), val.AssertedType)
-						if success {
-							res = res.MonoJoin(Elements().AbstractPointerV(ptr))
-						}
+						success = T.AssignableTo(dynType, val.AssertedType)
 					}
 
 					okV = okV.MonoJoin(makeConstant(success))
-					if !success {
-						res = res.MonoJoin(zeroVal)
+					return success
+				})
+
+				if makeConstant(true).Leq(okV) {
+					res = L.Consts().BotValue().Update(filtered)
+
+					if !isInterfaceAssert {
+						res = A.Load(res, mem)
 					}
 				}
+
+				canFail := makeConstant(false).Leq(okV)
 
 				// If the type assertion contains an "ok" component,
 				// then the result is a pair between the value of and the result
 				if val.CommaOk {
+					if canFail {
+						res = res.MonoJoin(L.ZeroValueForType(val.AssertedType))
+					}
+
 					// A tuple containing the result value and the ok flag
 					res = Elements().AbstractStructV(res, okV)
-				} else if makeConstant(false).Leq(okV) {
+				} else if canFail {
 					// If the type assert may panic, add its panic successor.
 					succs = succs.Update(cl.Panic(), initState)
 				}
@@ -1352,8 +1288,10 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 			}
 		}
 		log.Printf("Forgot to add successor? %T %v\n", cl.Node(), cl.Node())
+		charges, _ := initState.ThreadCharges().Get(g)
+		log.Printf("Charged edges at node: %q\n", charges.Edges(cl))
 		if opts.Visualize() {
-			cfg.VisualizeFunction(cl.Node().Function())
+			C.LoadRes.Cfg.VisualizeFunction(cl.Node().Function())
 		}
 		panic("")
 	}

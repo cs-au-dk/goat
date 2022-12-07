@@ -5,7 +5,7 @@ package graph
 // components with index j <= i.
 type SCCDecomposition[T any] struct {
 	Components  [][]T
-	comp        mapper[T]
+	comp        Mapper[T]
 	convolution *WrappedGraph[SCC, T]
 	Original    Graph[T]
 }
@@ -148,7 +148,7 @@ func (scc SCCDecomposition[T]) Convolution() WrappedGraph[SCC, T] {
 type WrappedGraph[W, T any] struct {
 	Graph[W]
 	edgesOf     func(T) []W
-	cachedEdges mapper[T]
+	cachedEdges Mapper[T]
 }
 
 

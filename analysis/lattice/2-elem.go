@@ -170,14 +170,6 @@ func (twoElementLatticeElement) Lifted() *LiftedBot {
 	panic(errUnsupportedTypeConversion)
 }
 
-func (twoElementLatticeElement) Map() Map {
-	panic(errUnsupportedTypeConversion)
-}
-
-func (twoElementLatticeElement) InfiniteMap() InfiniteMap {
-	panic(errUnsupportedTypeConversion)
-}
-
 func (twoElementLatticeElement) Memory() Memory {
 	panic(errUnsupportedTypeConversion)
 }

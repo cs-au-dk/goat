@@ -5,8 +5,8 @@ import "testing"
 func TestMapComparison(t *testing.T) {
 	var T = Create().Lattice().TwoElement().Top()
 
-	mapLat := Create().Lattice().MapVariadic(Create().Lattice().TwoElement(), "a", "b", "c")
-	elFactory := Create().Element().Map(mapLat)
+	mapLat := MakeMapLatticeVariadic[string](Create().Lattice().TwoElement(), "a", "b", "c")
+	elFactory := MakeMap[string](mapLat)
 
 	aT := elFactory(map[interface{}]Element{
 		"a": T,
@@ -56,8 +56,8 @@ func TestMapComparison(t *testing.T) {
 func TestMapJoin(t *testing.T) {
 	var T = Create().Lattice().TwoElement().Top()
 
-	mapLat := Create().Lattice().MapVariadic(Create().Lattice().TwoElement(), "a", "b", "c")
-	elFactory := Create().Element().Map(mapLat)
+	mapLat := MakeMapLatticeVariadic[string](Create().Lattice().TwoElement(), "a", "b", "c")
+	elFactory := MakeMap[string](mapLat)
 	aT := elFactory(map[interface{}]Element{
 		"a": T,
 	})
@@ -104,8 +104,8 @@ func TestMapJoin(t *testing.T) {
 func TestMapUpdate(t *testing.T) {
 	var T = Create().Lattice().TwoElement().Top()
 
-	mapLat := Create().Lattice().MapVariadic(Create().Lattice().TwoElement(), "a", "b", "c")
-	elFactory := Create().Element().Map(mapLat)
+	mapLat := MakeMapLatticeVariadic[string](Create().Lattice().TwoElement(), "a", "b", "c")
+	elFactory := MakeMap[string](mapLat)
 	mp := elFactory(map[interface{}]Element{
 		"a": T,
 	})
@@ -115,15 +115,15 @@ func TestMapUpdate(t *testing.T) {
 	})
 
 	tests := []struct {
-		a, expected Map
-		k           interface{}
+		a, expected Map[string]
+		k           string
 		v           Element
 	}{
 		{mp, abT, "b", T},
 	}
 
 	for _, test := range tests {
-		res := test.a.Map().Update(test.k, test.v)
+		res := test.a.Update(test.k, test.v)
 		if !res.Eq(test.expected) {
 			t.Errorf("%s[ %s ↦ %s ] = %s, expected %s\n", test.a, test.k, test.v, res, test.expected)
 		} else {

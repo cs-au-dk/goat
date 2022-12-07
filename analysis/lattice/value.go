@@ -40,7 +40,7 @@ func (elementFactory) AbstractValue(config AbstractValueConfig) AbstractValue {
 		typ = _POINTER_VALUE
 	case config.Struct != nil:
 		structLat := valueLattice.Get(_STRUCT_VALUE)
-		value = elFact.InfiniteMap(structLat)(config.Struct)
+		value = MakeInfiniteMap[any](structLat)(config.Struct)
 		typ = _STRUCT_VALUE
 	case config.Mutex:
 		mutexLat := valueLattice.Get(_MUTEX_VALUE)
@@ -157,10 +157,6 @@ func (m AbstractValue) ChannelInfo() ChannelInfo {
 	return m.ChanValue()
 }
 
-func (m AbstractValue) InfiniteMap() InfiniteMap {
-	return m.StructValue()
-}
-
 func (m AbstractValue) PointsTo() PointsTo {
 	return m.PointerValue()
 }
@@ -174,7 +170,7 @@ func (m AbstractValue) RWMutex() RWMutex {
 }
 
 func (m AbstractValue) IsClosure() bool {
-	return m.IsKnownStruct() && !m.StructValue().mp.forall(func(k any, _ Element) bool {
+	return m.IsKnownStruct() && !m.StructValue().ForAll(func(k any, _ Element) bool {
 		return k != -1
 	})
 }
@@ -282,7 +278,7 @@ func (m AbstractValue) Update(x Element) AbstractValue {
 			m.typ = _CHAN_VALUE
 		case *ConstantPropagationLattice:
 			m.typ = _BASIC_VALUE
-		case *InfiniteMapLattice:
+		case *InfiniteMapLattice[any]:
 			m.typ = _STRUCT_VALUE
 		case *PointsToLattice:
 			m.typ = _POINTER_VALUE
@@ -325,7 +321,7 @@ func (m AbstractValue) IsStruct() bool {
 func (m AbstractValue) IsMap() bool {
 	if m.IsKnownStruct() {
 		hasKeys := false
-		isMap := m.StructValue().mp.forall(func(key any, _ Element) bool {
+		isMap := m.StructValue().ForAll(func(key any, _ Element) bool {
 			hasKeys = true
 			return key == "keys" || key == "values"
 		})
@@ -338,7 +334,7 @@ func (m AbstractValue) IsMap() bool {
 func (m AbstractValue) IsArray() bool {
 	if m.IsKnownStruct() {
 		hasKeys := false
-		isArr := m.StructValue().mp.forall(func(key any, _ Element) bool {
+		isArr := m.StructValue().ForAll(func(key any, _ Element) bool {
 			hasKeys = true
 			return key == -2
 		})
@@ -444,9 +440,9 @@ func (m AbstractValue) ChanValue() ChannelInfo {
 	return m.value.ChannelInfo()
 }
 
-func (m AbstractValue) StructValue() InfiniteMap {
+func (m AbstractValue) StructValue() InfiniteMap[any] {
 	typeCheckValuesEqual(m.typ, _STRUCT_VALUE)
-	return m.value.InfiniteMap()
+	return m.value.(InfiniteMap[any])
 }
 
 func (m AbstractValue) RWMutexValue() RWMutex {

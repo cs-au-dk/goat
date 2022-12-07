@@ -71,9 +71,9 @@ func (c *AnalysisStateLattice) AnalysisState() *AnalysisStateLattice {
 	return c
 }
 
-func (s AnalysisState) AddCharges(tid defs.Goro, locs ...defs.CtrLoc) AnalysisState {
+func (s AnalysisState) AddCharge(tid defs.Goro, from defs.CtrLoc, to defs.CtrLoc) AnalysisState {
 	return s.UpdateThreadCharges(
-		s.ThreadCharges().WeakUpdate(tid, elFact.Charges(locs...)),
+		s.ThreadCharges().WeakUpdate(tid, elFact.Charges(from, to)),
 	)
 }
 

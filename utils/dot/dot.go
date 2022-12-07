@@ -133,7 +133,7 @@ const tmplGraph = `digraph GoroutineTopology {
 }
 `
 
-//==[ type def/func: DotCluster ]===============================================
+// ==[ type def/func: DotCluster ]===============================================
 type DotCluster struct {
 	ID       string
 	Clusters map[string]*DotCluster
@@ -164,7 +164,7 @@ func (c *DotCluster) countNodes() int {
 	return res
 }
 
-//==[ type def/func: DotNode    ]===============================================
+// ==[ type def/func: DotNode    ]===============================================
 type DotNode struct {
 	ID    string
 	Attrs DotAttrs
@@ -174,14 +174,14 @@ func (n *DotNode) String() string {
 	return n.ID
 }
 
-//==[ type def/func: DotEdge    ]===============================================
+// ==[ type def/func: DotEdge    ]===============================================
 type DotEdge struct {
 	From  *DotNode
 	To    *DotNode
 	Attrs DotAttrs
 }
 
-//==[ type def/func: DotAttrs   ]===============================================
+// ==[ type def/func: DotAttrs   ]===============================================
 type DotAttrs map[string]string
 
 func (p DotAttrs) List() []string {
@@ -200,7 +200,7 @@ func (p DotAttrs) Lines() string {
 	return strings.Join(p.List(), "\n")
 }
 
-//==[ type def/func: DotGraph   ]===============================================
+// ==[ type def/func: DotGraph   ]===============================================
 type DotGraph struct {
 	Title    string
 	Attrs    DotAttrs

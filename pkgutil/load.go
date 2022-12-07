@@ -75,12 +75,29 @@ func LoadPackagesFromSource(source string) ([]*packages.Package, error) {
 
 func LoadPackagesWithConfig(config *packages.Config, query string) ([]*packages.Package, error) {
 	pkgs, err := packages.Load(config, query)
-	switch {
-	case err != nil:
+	if err != nil {
 		return nil, err
-	case packages.PrintErrors(pkgs) > 0:
+	} else if packages.PrintErrors(pkgs) > 0 {
 		return nil, errors.New("errors encountered while loading packages")
-	default:
-		return pkgs, nil
 	}
+	if config.Tests {
+		// Deduplicate packages that have test functions (such packages are
+		// returned twice, once with no tests and once with tests. We discard
+		// the package without tests.) This prevents duplicate versions of the
+		// same types, functions, ssa values, etc., which can be very confusing
+		// when debugging.
+		packageIDs := map[string]bool{}
+		for _, pkg := range pkgs {
+			packageIDs[pkg.ID] = true
+		}
+
+		filteredPkgs := []*packages.Package{}
+		for _, pkg := range pkgs {
+			if !packageIDs[fmt.Sprintf("%s [%s.test]", pkg.ID, pkg.ID)] {
+				filteredPkgs = append(filteredPkgs, pkg)
+			}
+		}
+		pkgs = filteredPkgs
+	}
+	return pkgs, nil
 }

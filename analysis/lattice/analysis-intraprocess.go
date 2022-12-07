@@ -2,6 +2,7 @@ package lattice
 
 import (
 	"github.com/cs-au-dk/goat/analysis/defs"
+	"github.com/cs-au-dk/goat/utils"
 )
 
 //go:generate go run generate-map.go AnalysisIntraprocess defs.CtrLoc AnalysisState
@@ -16,7 +17,7 @@ func (a *AnalysisIntraprocessLattice) Bot() Element {
 	el := element{a}
 	return AnalysisIntraprocess{
 		el,
-		baseMap{el, defs.NewControllocationMap()},
+		baseMap[defs.CtrLoc]{el, utils.NewImmMap[defs.CtrLoc, Element]()},
 	}
 }
 

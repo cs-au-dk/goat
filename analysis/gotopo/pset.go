@@ -48,7 +48,7 @@ func getPrimitives(v ssa.Value, pt *pointer.Result) (res map[ssa.Value]struct{})
 		for _, l := range pt.Queries[v].PointsTo().Labels() {
 			p := l.Value()
 			if p == nil || blacklistPrimitive(p) {
-				return
+				continue
 			}
 
 			// switch pi := p.(type) {
@@ -204,8 +204,6 @@ func (C psetCtxt) makeDependencyMapFromRootNode(
 					joinSucc(n.CallRelationNode())
 					return
 				case *ssa.Panic:
-					return
-				case *ssa.Return:
 					return
 				case *ssa.UnOp:
 					if i.Op == token.ARROW {

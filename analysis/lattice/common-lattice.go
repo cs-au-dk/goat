@@ -29,8 +29,6 @@ type Lattice interface {
 	FlatFinite() *FlatFiniteLattice
 	FlatInt() *FlatIntLattice
 	Interval() *IntervalLattice
-	Map() *MapLattice
-	InfiniteMap() *InfiniteMapLattice
 	Memory() *MemoryLattice
 	OneElement() *OneElementLattice
 	OpOutcomes() *OpOutcomesLattice
@@ -85,14 +83,6 @@ func (*lattice) Interval() *IntervalLattice {
 	panic(errUnsupportedTypeConversion)
 }
 
-func (*lattice) Map() *MapLattice {
-	panic(errUnsupportedTypeConversion)
-}
-
-func (*lattice) InfiniteMap() *InfiniteMapLattice {
-	panic(errUnsupportedTypeConversion)
-}
-
 func (*lattice) Memory() *MemoryLattice {
 	panic(errUnsupportedTypeConversion)
 }
@@ -115,6 +105,15 @@ func (*lattice) Product() *ProductLattice {
 
 func (*lattice) TwoElement() *TwoElementLattice {
 	panic(errUnsupportedTypeConversion)
+}
+
+func unwrapLattice[T any](l Lattice) T {
+	switch l := l.(type) {
+	case T: return l
+	case *Lifted: return unwrapLattice[T](l.Lattice)
+	case *Dropped: return unwrapLattice[T](l.Lattice)
+	default: panic(errUnsupportedTypeConversion)
+	}
 }
 
 // Allows us to delay expensive stringification calls

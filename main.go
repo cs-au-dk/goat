@@ -4,7 +4,6 @@ import (
 	// "github.com/cs-au-dk/goat/solver"
 
 	"fmt"
-	"go/types"
 	"log"
 	"math"
 	"os"
@@ -17,10 +16,11 @@ import (
 
 	"github.com/cs-au-dk/goat/analysis/upfront/chreflect"
 	"github.com/cs-au-dk/goat/analysis/upfront/loopinline"
-	dot "github.com/cs-au-dk/goat/graph"
+	dotg "github.com/cs-au-dk/goat/graph"
 	"github.com/cs-au-dk/goat/pkgutil"
 	tu "github.com/cs-au-dk/goat/testutil"
 	"github.com/cs-au-dk/goat/utils"
+	"github.com/cs-au-dk/goat/utils/dot"
 	"github.com/cs-au-dk/goat/utils/graph"
 	"github.com/cs-au-dk/goat/utils/hmap"
 
@@ -76,7 +76,7 @@ func main() {
 		return
 	}
 
-	prog, _ := ssautil.AllPackages(pkgs, 0)
+	prog, _ := ssautil.AllPackages(pkgs, ssa.InstantiateGenerics)
 	prog.Build()
 
 	mains := ssautil.MainPackages(prog.AllPackages())
@@ -246,7 +246,7 @@ func main() {
 		ptaResult, _, goros := fullPreanalysisPipeline(standardPTAnalysisQueries)
 
 		log.Println("Constructing topology graph...")
-		image_path := dot.BuildGraph(prog, ptaResult, goros)
+		image_path := dotg.BuildGraph(prog, ptaResult, goros)
 		fmt.Println(image_path)
 	case task.IsCycleCheck():
 		_, _, goros := fullPreanalysisPipeline(standardPTAnalysisQueries)
@@ -359,6 +359,7 @@ func main() {
 		skips, aborts, completes := 0, 0, 0
 		pt, pcfg := preanalysisPipeline(u.IncludeType{All: true})
 		cfgFunctions := pcfg.Functions()
+		soundG := graph.FromCallGraph(pt.CallGraph, false)
 		G := graph.FromCallGraph(pt.CallGraph, true)
 		wf := u.ComputeWrittenFields(pt, G.SCC(entries))
 
@@ -390,25 +391,7 @@ func main() {
 			callDAG := G.SCC([]*ssa.Function{entry})
 			computeDominator := G.DominatorTree(entry)
 
-			ps := gotopo.GetPrimitives(entry, pt, G)
-			// Filter out non-local primitives and primitives whose allocation
-			// site are not reachable in the call graph.
-			// Currently also filters out non-channel primitives.
-			for _, usageInfo := range ps {
-				for _, usedPrimitives := range []map[ssa.Value]struct{}{
-					usageInfo.Chans(),
-					usageInfo.OutChans(),
-					// usageInfo.Sync(),
-				} {
-					for prim := range usedPrimitives {
-						if _, isCh := prim.Type().Underlying().(*types.Chan); !isCh ||
-							prim.Parent() == nil || !pkgutil.IsLocal(prim) ||
-							callDAG.ComponentOf(prim.Parent()) == -1 {
-							delete(usedPrimitives, prim)
-						}
-					}
-				}
-			}
+			ps, primsToUses := gotopo.GetPrimitives(entry, pt, G)
 
 			psets := func() (psets gotopo.PSets) {
 				switch {
@@ -464,29 +447,6 @@ func main() {
 				return psets[i].String() < psets[j].String()
 			})
 
-			// Compute map from primitives to functions in which they are used
-			primsToUses := map[ssa.Value]map[*ssa.Function]struct{}{}
-			for fun, usageInfo := range ps {
-				if callDAG.ComponentOf(fun) == -1 {
-					continue
-				}
-
-				for _, usedPrimitives := range []map[ssa.Value]struct{}{
-					usageInfo.Chans(),
-					usageInfo.OutChans(),
-					// TODO: Temporarily disabled because analysis of locks
-					// seem to time out more often than analysis of channels.
-					//usageInfo.Sync(),
-				} {
-					for prim := range usedPrimitives {
-						if _, seen := primsToUses[prim]; !seen {
-							primsToUses[prim] = make(map[*ssa.Function]struct{})
-						}
-						primsToUses[prim][fun] = struct{}{}
-					}
-				}
-			}
-
 			type fragment struct {
 				entry *ssa.Function
 				pset  utils.SSAValueSet
@@ -532,7 +492,8 @@ func main() {
 				Mains:            mains,
 				Cfg:              pcfg,
 				Pointer:          pt,
-				CallDAG:          callDAG,
+				CallDAG:          soundG.SCC([]*ssa.Function{entry}),
+				PrunedCallDAG:    callDAG,
 				CtrLocPriorities: u.GetCtrLocPriorities(cfgFunctions, callDAG),
 				WrittenFields:    wf,
 			}
@@ -584,7 +545,7 @@ func main() {
 					log.Println(color.GreenString("SA completed in %s", C.Metrics.Performance()))
 					completes++
 
-					blocks := ai.BlockAnalysis(C, ts, analysis)
+					blocks := ai.BlockAnalysisFiltered(C, ts, analysis, true)
 					if len(blocks) == 0 {
 						log.Println(color.GreenString("No blocking bugs detected"))
 					} else {
@@ -592,7 +553,7 @@ func main() {
 
 						if opts.Visualize() {
 							blocks.PrintPath(ts, analysis, G)
-							ts.Entry().Visualize()
+							ts.Visualize(blocks)
 						}
 					}
 
@@ -641,14 +602,47 @@ func main() {
 		fullPreanalysisPipeline(standardPTAnalysisQueries)
 		fmt.Printf("%d -- %s\n", u.ChAliasingInfo.MaxChanPtsToSetSize, u.ChAliasingInfo.Location)
 	case task.IsCfgToDot():
-		ptaResult, _ := preanalysisPipeline(standardPTAnalysisQueries)
+		ptaResult, cfg := preanalysisPipeline(standardPTAnalysisQueries)
 
 		log.Println("Preparing to visualize CFG:")
 		if opts.IsWholeProgramAnalysis() {
-			cfg.Visualize(prog, ptaResult)
+			cfg.Visualize(ptaResult)
 		} else {
-			cfg.VisualizeFunc(prog, ptaResult, opts.Function())
+			cfg.VisualizeFunc(opts.Function())
 		}
+	case task.IsCallGraphToDot():
+		ptaResult, cfg := preanalysisPipeline(standardPTAnalysisQueries)
+
+		log.Println("Preparing to visualize callgraph:")
+		cg := graph.FromCallGraph(ptaResult.CallGraph, false)
+		root := ptaResult.CallGraph.Root.Func
+		if opts.Function() != "main" {
+			root = cfg.FunctionByName(opts.Function())
+		}
+		scc := cg.SCC([]*ssa.Function{root})
+		allNodes := []*ssa.Function{}
+		allComps := []int{}
+		for i, comp := range scc.Components {
+			anyLocal := false
+			for _, node := range comp {
+				if pkgutil.IsLocal(node) {
+					anyLocal = true
+					break
+				}
+			}
+			if anyLocal || !opts.LocalPackages() {
+				allNodes = append(allNodes, comp...)
+				allComps = append(allComps, i)
+			}
+		}
+		scc.Convolution().ToDotGraph(allComps, &graph.VisualizationConfig[int]{
+			NodeAttrs: func(node int) (string, dot.DotAttrs) {
+				return fmt.Sprint(node), dot.DotAttrs{"label": fmt.Sprint(scc.Components[node][0])}
+			},
+		}).ShowDot()
+		cg.ToDotGraph(allNodes, &graph.VisualizationConfig[*ssa.Function]{
+			ClusterKey: func(node *ssa.Function) any { return scc.ComponentOf(node) },
+		}).ShowDot()
 	case task.IsAbstractInterpretation():
 		ptQueries := u.IncludeType{All: true}
 		if !task.IsWholeProgramAnalysis() {
@@ -658,17 +652,18 @@ func main() {
 		results := make(map[*ssa.Function]*ai.Metrics)
 
 		ptaResult, prog_cfg := preanalysisPipeline(ptQueries)
+		cg := ptaResult.CallGraph
+		entries := []*ssa.Function{cg.Root.Func}
 		loadRes := tu.LoadResult{
 			Prog:    prog,
 			Mains:   mains,
 			Cfg:     prog_cfg,
 			Pointer: ptaResult,
+			CallDAG: graph.FromCallGraph(cg, false).SCC(entries),
 		}
-		cg := ptaResult.CallGraph
-		G := graph.FromCallGraph(cg, true)
-		loadRes.CallDAG = G.SCC([]*ssa.Function{cg.Root.Func})
-		loadRes.CtrLocPriorities = u.GetCtrLocPriorities(prog_cfg.Functions(), loadRes.CallDAG)
-		loadRes.WrittenFields = u.ComputeWrittenFields(ptaResult, loadRes.CallDAG)
+		loadRes.PrunedCallDAG = graph.FromCallGraph(cg, true).SCC(entries)
+		loadRes.CtrLocPriorities = u.GetCtrLocPriorities(prog_cfg.Functions(), loadRes.PrunedCallDAG)
+		loadRes.WrittenFields = u.ComputeWrittenFields(ptaResult, loadRes.PrunedCallDAG)
 
 		// Analysis context
 		Cs := ai.ConfigAI(aiConfig).Executable(loadRes)
@@ -699,7 +694,7 @@ func main() {
 				})
 				blocks.Log()
 				if opts.Visualize() {
-					G.Entry().Visualize()
+					G.Visualize(blocks)
 				}
 
 				continue
@@ -758,7 +753,7 @@ func main() {
 				if !C.Metrics.Enabled() {
 					blocks.Log()
 					if opts.Visualize() {
-						G.Entry().Visualize()
+						G.Visualize(blocks)
 					}
 				}
 			}(f, C)

@@ -50,7 +50,6 @@ type Configuration interface {
 	GetSuccessorMap() map[uint32]Successor
 	GetTransitions(AnalysisCtxt, L.AnalysisState) transfers
 	Abstract(ABSTRACTION_LEVEL) Configuration
-	Visualize()
 }
 
 type BaseConfiguration struct {

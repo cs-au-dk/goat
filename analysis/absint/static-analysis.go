@@ -60,7 +60,7 @@ FIXPOINT:
 		select {
 		case <-sigCh:
 			// Received SIGUSR1 interrupt
-			G.Entry().Visualize()
+			G.Visualize(nil)
 		default:
 		}
 
@@ -75,7 +75,25 @@ FIXPOINT:
 				}
 			}
 
-			worklist.Rebuild()
+			// Remove elements from the worklist that are not reachable
+			// anymore. This sounds unlikely but happens sometimes because
+			// previously discovered transitions disappear after re-analysis.
+			// This indicates that the analysis is not monotone, which can for
+			// example be due to GH issue #12.
+			// When this happens the unreachable superlocations will always
+			// have priority -1, which is undesirable!
+			elements := []*AbsConfiguration{}
+			for !worklist.IsEmpty() {
+				c := worklist.GetNext()
+				if _, found := priorities[c]; found {
+					elements = append(elements, c)
+				}
+			}
+
+			for _, c := range elements {
+				worklist.Add(c)
+			}
+
 			reprioritizeAt *= 2
 		}
 
@@ -83,17 +101,11 @@ FIXPOINT:
 		C.LogSuperlocation(s.superloc)
 		state := analysis.GetUnsafe(s.Superlocation())
 
-		// Skip finding successors for panicked configurations
-		// TODO: What about not tracking their state and not putting them in the worklist?
-		if s.IsPanicked() {
-			continue
-		}
-
 		// Clear successor map to prevent duplicate edges.
 		s.Successors = map[uint32]Successor{}
 		succs := s.GetTransitions(C, state)
 		for _, succ := range succs {
-			s1 := G.Get(succ.Configuration())
+			s1 := G.GetOrSet(succ.Configuration())
 			s1Loc := s1.Superlocation()
 			// Add found successor to successor map, if not already present, and record
 			// the added transition to the "state-less" successor map
@@ -104,11 +116,16 @@ FIXPOINT:
 
 			updState := succ.State
 
-			// If the memory was updated as a result of the LUB operation we put s1 in the worklist.
-			if lub := updState.MonoJoin(prevState); !lub.Eq(prevState) {
-				analysis = analysis.Update(s1Loc, lub)
+			if !s1.IsPanicked() {
+				// If the memory was updated as a result of the LUB operation we put s1 in the worklist.
+				if lub := updState.MonoJoin(prevState); !lub.Eq(prevState) {
+					analysis = analysis.Update(s1Loc, lub)
 
-				worklist.Add(s1)
+					worklist.Add(s1)
+				}
+			} else {
+				// Skip processing of panicked configurations
+				analysis = analysis.Update(s1Loc, updState)
 			}
 		}
 	}

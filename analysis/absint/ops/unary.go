@@ -2,6 +2,7 @@ package ops
 
 import (
 	"go/token"
+	"log"
 
 	L "github.com/cs-au-dk/goat/analysis/lattice"
 
@@ -9,22 +10,22 @@ import (
 )
 
 func UnOp(v L.AbstractValue, ssaVal *ssa.UnOp) (result L.AbstractValue) {
-	switch {
-	case !v.IsBasic():
+	if !v.IsBasic() {
 		panic("what")
-
 	}
 
 	basic := v.BasicValue()
-	if basic.IsBot() ||
-		basic.IsTop() {
+	if basic.IsBot() || basic.IsTop() {
 		return v
 	}
 
 	var supported bool
 	switch val := basic.Value().(type) {
 	case int:
-		result, supported = intUnOp(val, ssaVal.Op)
+		log.Fatalf("A runtime 'int' value appeared here %v %v %T", ssaVal, v, v)
+
+	case int64:
+		result, supported = int64UnOp(val, ssaVal.Op)
 	case bool:
 		result, supported = boolUnOp(val, ssaVal.Op)
 	case float64:
@@ -38,9 +39,9 @@ func UnOp(v L.AbstractValue, ssaVal *ssa.UnOp) (result L.AbstractValue) {
 	return L.ZeroValueForType(ssaVal.Type()).ToTop()
 }
 
-func intUnOp(v int, op token.Token) (val L.AbstractValue, supported bool) {
+func int64UnOp(v int64, op token.Token) (val L.AbstractValue, supported bool) {
 	supported = true
-	var res int
+	var res int64
 	switch op {
 	case token.SUB:
 		res = -v

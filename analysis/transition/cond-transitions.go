@@ -11,43 +11,51 @@ import (
 )
 
 type Wait struct {
-	Progressed defs.Goro
-	Cond       loc.Location
+	transitionSingle
+	Cond loc.Location
 }
 
 func (t Wait) PrettyPrint() {
-	fmt.Println(t.Progressed, "started waiting on Cond", t.Cond)
+	fmt.Println(t.progressed, "started waiting on Cond", t.Cond)
 }
 
 func (t Wait) String() string {
-	return t.Progressed.String() + "-[ Wait(" + t.Cond.String() + ") ]"
+	return t.progressed.String() + "-[ Wait(" + t.Cond.String() + ") ]"
 }
 
 func (t Wait) Hash() uint32 {
 	return utils.HashCombine(
-		t.Progressed.Hash(),
+		t.progressed.Hash(),
 		t.Cond.Hash(),
 	)
 }
 
+func NewWait(progressed defs.Goro, cond loc.Location) Wait {
+	return Wait{transitionSingle{progressed}, cond}
+}
+
 type Wake struct {
-	Progressed defs.Goro
-	Cond       loc.Location
+	transitionSingle
+	Cond loc.Location
 }
 
 func (t Wake) PrettyPrint() {
-	fmt.Println(t.Progressed, "started waking on Cond", t.Cond)
+	fmt.Println(t.progressed, "started waking on Cond", t.Cond)
 }
 
 func (t Wake) String() string {
-	return t.Progressed.String() + "-[ Wake(" + t.Cond.String() + ") ]"
+	return t.progressed.String() + "-[ Wake(" + t.Cond.String() + ") ]"
 }
 
 func (t Wake) Hash() uint32 {
 	return utils.HashCombine(
-		t.Progressed.Hash(),
+		t.progressed.Hash(),
 		t.Cond.Hash(),
 	)
+}
+
+func NewWake(progressed defs.Goro, cond loc.Location) Wake {
+	return Wake{transitionSingle{progressed}, cond}
 }
 
 type Signal struct {

@@ -12,10 +12,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/cs-au-dk/goat/analysis/cfg"
 	u "github.com/cs-au-dk/goat/analysis/upfront"
+	"github.com/cs-au-dk/goat/analysis/upfront/loopinline"
 	"github.com/cs-au-dk/goat/pkgutil"
 	"github.com/cs-au-dk/goat/utils/graph"
 
@@ -40,6 +42,7 @@ type LoadResult struct {
 	GoroCycles       u.GoCycles
 	Pointer          *pointer.Result
 	CallDAG          graph.SCCDecomposition[*ssa.Function]
+	PrunedCallDAG    graph.SCCDecomposition[*ssa.Function]
 	CtrLocPriorities u.CtrLocPriorities
 	WrittenFields    u.WrittenFields
 }
@@ -47,9 +50,14 @@ type LoadResult struct {
 func (res *LoadResult) upfrontAnalyses() {
 	pkgutil.GetLocalPackages(res.Mains, res.Prog.AllPackages())
 
-	res.Pointer = u.TotalAndersen(res.Prog, res.Mains)
+	if res.Pointer == nil {
+		res.Pointer = u.TotalAndersen(res.Prog, res.Mains)
+	}
 
-	res.Cfg = cfg.GetCFG(res.Prog, res.Mains, res.Pointer)
+	if res.Cfg == nil {
+		res.Cfg = cfg.GetCFG(res.Prog, res.Mains, res.Pointer)
+	}
+
 	// TODO: Revisit
 	// if !utils.Opts().IsWholeProgramAnalysis() {
 	// 	res.Goros = u.CollectGoros(res.Pointer)
@@ -57,14 +65,15 @@ func (res *LoadResult) upfrontAnalyses() {
 	// }
 
 	cg := res.Pointer.CallGraph
-	G := graph.FromCallGraph(cg, true)
-	res.CallDAG = G.SCC([]*ssa.Function{cg.Root.Func})
+	entries := []*ssa.Function{cg.Root.Func}
+	res.CallDAG = graph.FromCallGraph(cg, false).SCC(entries)
+	res.PrunedCallDAG = graph.FromCallGraph(cg, true).SCC(entries)
 
-	res.CtrLocPriorities = u.GetCtrLocPriorities(res.Cfg.Functions(), res.CallDAG)
-	res.WrittenFields = u.ComputeWrittenFields(res.Pointer, res.CallDAG)
+	res.CtrLocPriorities = u.GetCtrLocPriorities(res.Cfg.Functions(), res.PrunedCallDAG)
+	res.WrittenFields = u.ComputeWrittenFields(res.Pointer, res.PrunedCallDAG)
 }
 
-func LoadExamplePackage(t *testing.T, pathToRoot string, pkg string) LoadResult {
+func LoadExampleAsPackages(t *testing.T, pathToRoot string, pkg string, loopInline bool) []*packages.Package {
 	// Invoking the package tools is slow because it uses `go list` under the hood.
 	// If the package doesn't have imports we can take a fast path by loading the
 	// code manually and parsing it ourselves.
@@ -76,7 +85,7 @@ func LoadExamplePackage(t *testing.T, pathToRoot string, pkg string) LoadResult 
 				if content, err := os.ReadFile(srcDir + "/main.go"); err == nil &&
 					// Assert no imports
 					!bytes.Contains(content, []byte("import")) {
-					return LoadPackageFromSource(t, pkg, string(content))
+					return LoadSourceAsPackages(t, pkg, string(content))
 				}
 			}
 		}
@@ -92,7 +101,24 @@ func LoadExamplePackage(t *testing.T, pathToRoot string, pkg string) LoadResult 
 		t.Fatal("Example contains more than just a main package?")
 	}
 
-	return LoadResultFromPackages(t, pkgs)
+	if loopInline {
+		if err := loopinline.InlineLoops(pkgs); err != nil {
+			t.Fatal("Loop inlining failed:", err)
+		}
+	}
+	return pkgs
+}
+
+func LoadExamplePackage(t *testing.T, pathToRoot string, pkg string) LoadResult {
+	return loadExamplePackage(t, pathToRoot, pkg, false)
+}
+
+func LoadLoopInlinedExamplePackage(t *testing.T, pathToRoot string, pkg string) LoadResult {
+	return loadExamplePackage(t, pathToRoot, pkg, true)
+}
+
+func loadExamplePackage(t *testing.T, pathToRoot string, pkg string, loopInline bool) LoadResult {
+	return LoadResultFromPackages(t, LoadExampleAsPackages(t, pathToRoot, pkg, loopInline))
 }
 
 func LoadResultFromPackages(t *testing.T, pkgs []*packages.Package) (res LoadResult) {
@@ -101,7 +127,7 @@ func LoadResultFromPackages(t *testing.T, pkgs []*packages.Package) (res LoadRes
 
 	u.CollectNames(pkgs)
 
-	res.Prog, _ = ssautil.AllPackages(pkgs, ssa.SanityCheckFunctions)
+	res.Prog, _ = ssautil.AllPackages(pkgs, ssa.SanityCheckFunctions|ssa.InstantiateGenerics)
 	res.Prog.Build()
 
 	res.Mains = ssautil.MainPackages(res.Prog.AllPackages())
@@ -111,7 +137,7 @@ func LoadResultFromPackages(t *testing.T, pkgs []*packages.Package) (res LoadRes
 	return
 }
 
-func LoadPackageFromSource(t *testing.T, importPath string, content string) (res LoadResult) {
+func LoadSourceAsPackages(t *testing.T, importPath string, content string) []*packages.Package {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(
 		fset,
@@ -126,27 +152,62 @@ func LoadPackageFromSource(t *testing.T, importPath string, content string) (res
 
 	// First argument is package path, the second is name.
 	pkg := types.NewPackage(importPath, "main")
-	spkg, _, err := ssautil.BuildPackage(
+	info := &types.Info{
+		Types:      make(map[ast.Expr]types.TypeAndValue),
+		Defs:       make(map[*ast.Ident]types.Object),
+		Uses:       make(map[*ast.Ident]types.Object),
+		Implicits:  make(map[ast.Node]types.Object),
+		Instances:  make(map[*ast.Ident]types.Instance),
+		Scopes:     make(map[ast.Node]*types.Scope),
+		Selections: make(map[*ast.SelectorExpr]*types.Selection),
+	}
+	if err := types.NewChecker(
 		&types.Config{Importer: importer.Default()},
-		fset, pkg, files,
-		ssa.SanityCheckFunctions,
-	)
-	if err != nil {
+		fset, pkg, info).Files(files); err != nil {
 		t.Fatal(err)
 	}
 
 	// If the package does not have imports we can take a fast path.
 	if len(pkg.Imports()) == 0 {
-		spkg.Prog.Build()
-		res.Prog = spkg.Prog
-		res.Mains = []*ssa.Package{spkg}
-		res.MainPkg = &packages.Package{
+		return []*packages.Package{{
+			// ID is a unique identifier for a package,
+			// in a syntax provided by the underlying build system.
+			//
+			// Because the syntax varies based on the build system,
+			// clients should treat IDs as opaque and not attempt to
+			// interpret them.
+			ID: "pkg-loaded-from-src",
+
+			// Name is the package name as it appears in the package source code.
+			Name: pkg.Name(),
+
+			// PkgPath is the package path as used by the go/types package.
+			PkgPath: pkg.Path(),
+
+			// Types provides type information for the package.
+			// The NeedTypes LoadMode bit sets this field for packages matching the
+			// patterns; type information for dependencies may be missing or incomplete,
+			// unless NeedDeps and NeedImports are also set.
+			Types: pkg,
+
+			// Fset provides position information for Types, TypesInfo, and Syntax.
+			// It is set only when Types is set.
+			Fset: fset,
+
+			// Syntax is the package's syntax trees, for the files listed in CompiledGoFiles.
+			//
+			// The NeedSyntax LoadMode bit populates this field for packages matching the patterns.
+			// If NeedDeps and NeedImports are also set, this field will also be populated
+			// for dependencies.
+			//
+			// Syntax is kept in the same order as CompiledGoFiles, with the caveat that nils are
+			// removed.  If parsing returned nil, Syntax may be shorter than CompiledGoFiles.
 			Syntax: files,
-		}
 
-		res.upfrontAnalyses()
-
-		return
+			// TypesInfo provides type information about the package's syntax trees.
+			// It is set only when Syntax is set.
+			TypesInfo: info,
+		}}
 	}
 
 	// Otherwise we need to invoke the packages tool that can import code for
@@ -157,7 +218,44 @@ func LoadPackageFromSource(t *testing.T, importPath string, content string) (res
 	if err != nil {
 		t.Fatal(err)
 	}
-	return LoadResultFromPackages(t, pkgs)
+	return pkgs
+}
+
+func LoadPackageFromSource(t *testing.T, importPath string, content string) (res LoadResult) {
+	return LoadResultFromPackages(t, LoadSourceAsPackages(t, importPath, content))
+}
+
+var analysisLock sync.Mutex
+
+// Utility function for running analysis tests in parallel. Expensive things
+// such as loading code from disk, constructing SSA, performing pointer
+// analysis, etc. is done in parallel.
+// Call t.Parallel() before calling this function.
+func ParallelHelper(t *testing.T, pkgs []*packages.Package, f func(LoadResult)) {
+	var res LoadResult
+
+	// Perform expensive pre-analyses in parallel
+	res.MainPkg = pkgs[0]
+	res.Prog, _ = ssautil.AllPackages(pkgs, ssa.SanityCheckFunctions|ssa.InstantiateGenerics)
+	res.Prog.Build()
+
+	res.Mains = ssautil.MainPackages(res.Prog.AllPackages())
+
+	res.Pointer = u.TotalAndersen(res.Prog, res.Mains)
+	res.Cfg = cfg.GetCFG(res.Prog, res.Mains, res.Pointer)
+
+	// Analyses or procedures that touch global state are protected by the
+	// analysisLock. This includes CollectNames, GetLocalPackages and the main
+	// test function (which we assume will perform a static analysis run).
+	analysisLock.Lock()
+	defer analysisLock.Unlock()
+
+	t.Logf("Running %v", t.Name())
+
+	u.CollectNames(pkgs)
+	res.upfrontAnalyses()
+
+	f(res)
 }
 
 func ListGoKerPackages(t *testing.T, pathToRoot string) []string {

@@ -63,7 +63,7 @@ func PrintCfg(G Cfg) {
 	var visited *map[Node]bool = new(map[Node]bool)
 	*visited = make(map[Node]bool)
 
-	for entry := range cfg.entries {
+	for entry := range G.entries {
 		printNode(entry, visited)
 	}
 }

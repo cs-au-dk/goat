@@ -7,8 +7,11 @@ import (
 	loc "github.com/cs-au-dk/goat/analysis/location"
 )
 
-/* Wrapper around a memory to facilitate memory operations on arbitrary
-   locations (as opposed to only addressable locations) */
+/*
+Wrapper around a memory to facilitate memory operations on arbitrary
+
+	locations (as opposed to only addressable locations)
+*/
 type _mops struct {
 	mem *Memory
 }

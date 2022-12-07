@@ -12,18 +12,26 @@ type Transition interface {
 	PrettyPrint()
 }
 
-type In struct {
-	Progressed defs.Goro
+// Sub-interface for single-goro transitions
+type TransitionSingle interface {
+	Progressed() defs.Goro
 }
 
-func (t In) Hash() uint32 {
-	return t.Progressed.Hash()
-}
+type transitionSingle struct{ progressed defs.Goro }
+
+func (t transitionSingle) Hash() uint32          { return t.progressed.Hash() }
+func (t transitionSingle) Progressed() defs.Goro { return t.progressed }
+
+type In struct{ transitionSingle }
 
 func (t In) String() string {
-	return "𝜏" + t.Progressed.String()
+	return "𝜏" + t.progressed.String()
 }
 
 func (t In) PrettyPrint() {
-	fmt.Println("Internal transition for thread", t.Progressed)
+	fmt.Println("Internal transition for thread", t.progressed)
+}
+
+func NewIn(progressed defs.Goro) In {
+	return In{transitionSingle{progressed}}
 }

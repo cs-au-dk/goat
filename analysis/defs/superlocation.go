@@ -13,17 +13,15 @@ import (
 	"github.com/benbjohnson/immutable"
 )
 
-//go:generate go run generate-hasher.go Superloc Superlocation
-
 type pathCondition struct{}
 
 type Superloc struct {
-	threads *immutable.Map
+	threads *immutable.Map[Goro, CtrLoc]
 	pc      pathCondition
 }
 
 func (factory) Superloc(threads map[Goro]CtrLoc) Superloc {
-	mp := immutable.NewMapBuilder(hashergoro{})
+	mp := immutable.NewMapBuilder[Goro, CtrLoc](utils.HashableHasher[Goro]())
 	for tid, loc := range threads {
 		mp.Set(tid, loc)
 	}
@@ -40,8 +38,7 @@ func (factory) EmptySuperloc() Superloc {
 // Method for retrieving the main goroutine (identified as the root goroutine).
 func (s Superloc) Main() Goro {
 	for iter := s.threads.Iterator(); !iter.Done(); {
-		k, _ := iter.Next()
-		g := k.(Goro)
+		g, _, _ := iter.Next()
 		if g.IsRoot() {
 			return g
 		}
@@ -49,16 +46,8 @@ func (s Superloc) Main() Goro {
 	panic(fmt.Sprintf("No main goroutine for superlocation %s", s))
 }
 
-func NewSuperlocationMap() *immutable.Map {
-	return immutable.NewMap(hasherSuperloc{})
-}
-
 func (s Superloc) Size() int {
 	return s.threads.Len()
-}
-
-func (s Superloc) Threads() *immutable.Map {
-	return s.threads
 }
 
 func (s Superloc) GetUnsafe(g Goro) CtrLoc {
@@ -66,14 +55,11 @@ func (s Superloc) GetUnsafe(g Goro) CtrLoc {
 	if !found {
 		log.Fatal("Queried for inexistent thread", g, "in superlocation", s)
 	}
-	return cl.(CtrLoc)
+	return cl
 }
 
 func (s Superloc) Get(tid Goro) (CtrLoc, bool) {
-	if cl, found := s.threads.Get(tid); found {
-		return cl.(CtrLoc), true
-	}
-	return CtrLoc{}, false
+	return s.threads.Get(tid)
 }
 
 func (s *Superloc) UpdateThread(tid Goro, loc CtrLoc) *Superloc {
@@ -88,12 +74,10 @@ func (s *Superloc) UpdatePathCondition(pc pathCondition) *Superloc {
 
 func (s Superloc) Hash() uint32 {
 	hashes := []uint32{}
-	iter := s.Threads().Iterator()
+	iter := s.threads.Iterator()
 
 	for !iter.Done() {
-		ig, icl := iter.Next()
-		g := ig.(Goro)
-		cl := icl.(CtrLoc)
+		g, cl, _ := iter.Next()
 		hashes = append(hashes, utils.HashCombine(g.Hash(), cl.Hash()))
 	}
 
@@ -106,12 +90,10 @@ func (s Superloc) Hash() uint32 {
 
 func (s Superloc) String() string {
 	hashes := []func() string{}
-	iter := s.Threads().Iterator()
+	iter := s.threads.Iterator()
 
 	for !iter.Done() {
-		ig, iloc := iter.Next()
-		g := ig.(Goro)
-		cl := iloc.(CtrLoc)
+		g, cl, _ := iter.Next()
 		hashes = append(hashes, func() string {
 			var clstr string
 			if cl.Panicked() {
@@ -128,12 +110,10 @@ func (s Superloc) String() string {
 
 func (s Superloc) StringWithPos() string {
 	hashes := []string{}
-	iter := s.Threads().Iterator()
+	iter := s.threads.Iterator()
 
 	for !iter.Done() {
-		ig, iloc := iter.Next()
-		g := ig.(Goro)
-		cl := iloc.(CtrLoc)
+		g, cl, _ := iter.Next()
 		hashes = append(hashes, func() string {
 			var clstr string
 			if cl.Panicked() {
@@ -154,17 +134,15 @@ func (s Superloc) StringWithPos() string {
 func (s Superloc) ForEach(do func(Goro, CtrLoc)) {
 	iter := s.threads.Iterator()
 	for !iter.Done() {
-		g, cl := iter.Next()
-		do(g.(Goro), cl.(CtrLoc))
+		g, cl, _ := iter.Next()
+		do(g, cl)
 	}
 }
 
 func (s Superloc) Find(find func(Goro, CtrLoc) bool) (Goro, CtrLoc, bool) {
 	iter := s.threads.Iterator()
 	for !iter.Done() {
-		k, v := iter.Next()
-		g := k.(Goro)
-		cl := v.(CtrLoc)
+		g, cl, _ := iter.Next()
 		if find(g, cl) {
 			return g, cl, true
 		}

@@ -2,6 +2,7 @@ package lattice
 
 import (
 	"github.com/cs-au-dk/goat/analysis/defs"
+	"github.com/cs-au-dk/goat/utils"
 )
 
 //go:generate go run generate-map.go ThreadCharges defs.Goro Charges
@@ -16,7 +17,7 @@ func (m *ThreadChargesLattice) Bot() Element {
 	el := element{m}
 	return ThreadCharges{
 		el,
-		baseMap{el, defs.NewGoroutineMap()},
+		baseMap[defs.Goro]{el, utils.NewImmMap[defs.Goro, Element]()},
 	}
 }
 

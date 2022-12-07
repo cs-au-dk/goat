@@ -2,6 +2,7 @@ package absint
 
 import (
 	"fmt"
+	"go/types"
 	"log"
 	"time"
 
@@ -156,7 +157,22 @@ func (s *AbsConfiguration) isAtRelevantCommunicationNode(
 
 	for _, param := range cfg.CommunicationPrimitivesOf(node) {
 		av, _ := C.swapWildcard(g, mem, param)
-		for _, l := range av.PointerValue().FilterNil().Entries() {
+		nonNilLocs := av.PointerValue().NonNilEntries()
+
+		if _, isChan := param.Type().Underlying().(*types.Chan); isChan && len(nonNilLocs) == 0 {
+			if !av.PointerValue().Contains(loc.NilLocation{}) {
+				panic(fmt.Errorf("Expected %v to contain a nil pointer, was empty?", param))
+			}
+
+			// If any channel primitive is nil we treat the operation as relevant.
+			// This simplifies the implementation of the "silent" abstract
+			// interpreter as it does not have to reason about which operations are
+			// enabled and whether blocking is possible
+			// (which it is not possible to model there currently).
+			return true
+		}
+
+		for _, l := range nonNilLocs {
 			// Dig out the allocation site location in case of field pointers
 			for {
 				switch lt := l.(type) {
@@ -394,7 +410,7 @@ FIXPOINT:
 	addResult := func(conf *AbsConfiguration, state L.AnalysisState) {
 		results.succUpdate(Successor{
 			configuration: conf.Copy(),
-			transition:    T.In{Progressed: g},
+			transition:    T.NewIn(g),
 		}, state)
 	}
 
@@ -402,7 +418,7 @@ FIXPOINT:
 		addResult(
 			s.Copy().DeriveThread(g,
 				cl.Derive(
-					cfg.AddSynthetic(cfg.SynthConfig{
+					C.LoadRes.Cfg.AddSynthetic(cfg.SynthConfig{
 						Type:             cfg.SynthTypes.TERMINATE_GORO,
 						Function:         cl.Node().Function(),
 						TerminationCause: cause,
@@ -431,10 +447,8 @@ FIXPOINT:
 			// add a goroutine with that index. If the goroutine bound was exceeded,
 			// pretend that the spawn is a no-op.
 			// TODO: Unsound
-			if !opts.WithinGoroBound(index) {
-				if C.Log.Enabled {
-					log.Println("Tried spawning", g.Spawn(cl), "in excess of goroutine bound", index, "at superlocation", s)
-				}
+			if !opts.WithinGoroBound(index) && C.Log.Enabled {
+				log.Println("Tried spawning", g.Spawn(cl), "in excess of goroutine bound", index, "at superlocation", s)
 			}
 
 			spawnee := radix.SetIndex(index)
@@ -478,7 +492,14 @@ FIXPOINT:
 					}
 					if !opts.WithinGoroBound(index) {
 						if !opts.NoAbort() {
-							C.Metrics.Panic(fmt.Errorf("%w: control flow cycle to %v", ErrUnboundedGoroutineSpawn, g.SpawnIndexed(cl, index)))
+							C.Metrics.Panic(
+								fmt.Errorf(
+									"%w: control flow cycle to %v (%s)",
+									ErrUnboundedGoroutineSpawn,
+									g.SpawnIndexed(cl, index),
+									cl.PosString(),
+								),
+							)
 						}
 						blacklists[nil] = struct{}{}
 						continue
@@ -515,7 +536,14 @@ FIXPOINT:
 					}
 					if !opts.WithinGoroBound(index) {
 						if !opts.NoAbort() {
-							C.Metrics.Panic(fmt.Errorf("%w: control flow cycle to %v", ErrUnboundedGoroutineSpawn, g.SpawnIndexed(cl, index)))
+							C.Metrics.Panic(
+								fmt.Errorf(
+									"%w: control flow cycle to %v (%s)",
+									ErrUnboundedGoroutineSpawn,
+									g.SpawnIndexed(cl, index),
+									cl.PosString(),
+								),
+							)
 						}
 						blacklists[entry.Function()] = struct{}{}
 						continue

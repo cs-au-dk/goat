@@ -4,7 +4,7 @@ package lattice
 
 type WrappedMapElementLattice struct {
 	lattice
-	mp MapLattice
+	mp MapLattice[KEYTYPE]
 }
 
 func (m *WrappedMapElementLattice) Eq(o Lattice) bool {
@@ -23,14 +23,14 @@ func (m *WrappedMapElementLattice) Eq(o Lattice) bool {
 func (m *WrappedMapElementLattice) Top() Element {
 	return WrappedMapElement{
 		element{m},
-		m.mp.Top().Map(),
+		m.mp.Top().(Map[KEYTYPE]),
 	}
 }
 
 func (m *WrappedMapElementLattice) Bot() Element {
 	return WrappedMapElement{
 		element{m},
-		m.mp.Bot().Map(),
+		m.mp.Bot().(Map[KEYTYPE]),
 	}
 }
 
@@ -40,7 +40,7 @@ func (m *WrappedMapElementLattice) WrappedMapElement() *WrappedMapElementLattice
 
 type WrappedMapElement struct {
 	element
-	mp Map
+	mp Map[KEYTYPE]
 }
 
 // Map methods
@@ -54,8 +54,8 @@ func (w WrappedMapElement) Update(key KEYTYPE, value VALUETYPE) WrappedMapElemen
 }
 
 func (w WrappedMapElement) ForEach(f func(KEYTYPE, VALUETYPE)) {
-	w.mp.ForEach(func(key interface{}, value Element) {
-		f(key.(KEYTYPE), value.(VALUETYPE))
+	w.mp.ForEach(func(key KEYTYPE, value Element) {
+		f(key, value.(VALUETYPE))
 	})
 }
 

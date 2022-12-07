@@ -42,6 +42,8 @@ var colorize = struct {
 	},
 }
 
+var phasher = utils.PointerHasher[any]{}
+
 // TODO: This type should be defined somewhere else with a suitable implementation
 // TODO: We probably want more context
 type Context = *ssa.Function
@@ -103,7 +105,6 @@ func (l GlobalLocation) Position() string {
 }
 
 func (l GlobalLocation) Hash() uint32 {
-	phasher := utils.PointerHasher{}
 	return phasher.Hash(l.Site)
 }
 
@@ -145,8 +146,6 @@ func (l AllocationSiteLocation) Position() string {
 }
 
 func (l AllocationSiteLocation) Hash() uint32 {
-	phasher := utils.PointerHasher{}
-
 	var ctxHash uint32
 	if l.Context != nil {
 		ctxHash = phasher.Hash(l.Context)
@@ -224,7 +223,6 @@ func (l LocalLocation) Position() string {
 func (l LocalLocation) Hash() uint32 {
 	ihasher := immutable.NewHasher(l.DeclLine)
 	shasher := immutable.NewHasher(l.Name)
-	phasher := utils.PointerHasher{}
 
 	return utils.HashCombine(
 		l.Goro.Hash(),
@@ -432,7 +430,6 @@ type FunctionPointer struct {
 }
 
 func (fp FunctionPointer) Hash() uint32 {
-	phasher := utils.PointerHasher{}
 	return phasher.Hash(fp.Fun)
 }
 func (fp FunctionPointer) Position() string {

@@ -3,6 +3,7 @@ package absint
 import (
 	"fmt"
 
+	"github.com/cs-au-dk/goat/analysis/defs"
 	L "github.com/cs-au-dk/goat/analysis/lattice"
 	"github.com/cs-au-dk/goat/utils/graph"
 	"github.com/cs-au-dk/goat/utils/hmap"
@@ -39,7 +40,7 @@ type SuperlocGraph struct {
 	entry *AbsConfiguration
 	// Used to canonicalize abstract configurations such that configurations
 	// with the same superlocation use the same AbsConfiguration object.
-	canon *hmap.Map[*AbsConfiguration, *AbsConfiguration]
+	canon *hmap.Map[defs.Superloc, *AbsConfiguration]
 }
 
 func (G SuperlocGraph) Size() int {
@@ -82,11 +83,15 @@ func (G SuperlocGraph) Entry() *AbsConfiguration {
 	return G.entry
 }
 
-func (G SuperlocGraph) Get(s *AbsConfiguration) *AbsConfiguration {
-	if _, found := G.canon.GetOk(s); !found {
-		G.canon.Set(s, s)
+func (G SuperlocGraph) GetOrSet(s *AbsConfiguration) *AbsConfiguration {
+	if _, found := G.canon.GetOk(s.superloc); !found {
+		G.canon.Set(s.superloc, s)
 	}
-	return G.canon.Get(s)
+	return G.canon.Get(s.superloc)
+}
+
+func (G SuperlocGraph) Get(sl defs.Superloc) *AbsConfiguration {
+	return G.canon.Get(sl)
 }
 
 func (G SuperlocGraph) ForEach(do func(*AbsConfiguration)) {

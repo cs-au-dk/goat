@@ -5,6 +5,7 @@ import (
 	"go/types"
 	"strings"
 
+	"github.com/cs-au-dk/goat/pkgutil"
 	"github.com/cs-au-dk/goat/utils"
 	"github.com/cs-au-dk/goat/utils/graph"
 
@@ -15,21 +16,58 @@ import (
 // Map every function to the primitives it uses
 type Primitives map[*ssa.Function]*Func
 
-// Process functions based on reachability
-func GetPrimitives(entry *ssa.Function, pt *pointer.Result, G graph.Graph[*ssa.Function]) (p Primitives) {
+// Get a summary of used primitives in each function reachable from entry in
+// the provided graph. Only local (according to pkgutil.IsLocal) primitives
+// that are allocated in a reachable function are included in summaries.
+// Additionally returns a map from primitives to the set of functions in
+// which they are used, based on the previously computed summaries.
+// TODO: We can make the local requirement an option?
+func GetPrimitives(
+	entry *ssa.Function,
+	pt *pointer.Result,
+	G graph.Graph[*ssa.Function],
+) (p Primitives, primsToUses map[ssa.Value]map[*ssa.Function]struct{}) {
 	/* TODO: We currently lose some precision from treating every primitive
 	 * inside a struct as the same primitive. I.e. with a struct such as
 	 * `type S struct { mu1, mu2 sync.Mutex }`
 	 * we would not (currently) be able to distinguish uses of mu1 and mu2.
 	 * Requires identification of primitives both by allocation site and Path.
 	 */
+	// NOTE: Collection of non-channel primitives is currently completely
+	// disabled in the process function and in the mapping of primitives to
+	// functions in which they are used (below).
 	p = make(Primitives)
 
+	// Compute reachable functions first, so we can check that primitives'
+	// allocation sites are reachable as we process primitive uses.
+	reachable := map[*ssa.Function]bool{}
 	G.BFS(entry, func(f *ssa.Function) bool {
-		p.process(f, pt)
+		reachable[f] = true
 		return false
 	})
 
+	G.BFS(entry, func(f *ssa.Function) bool {
+		p.process(f, pt, reachable)
+		return false
+	})
+
+	primsToUses = map[ssa.Value]map[*ssa.Function]struct{}{}
+	for fun, usageInfo := range p {
+		for _, usedPrimitives := range []map[ssa.Value]struct{}{
+			usageInfo.Chans(),
+			usageInfo.OutChans(),
+			// TODO: Temporarily disabled because analysis of locks
+			// seem to time out more often than analysis of channels.
+			//usageInfo.Sync(),
+		} {
+			for prim := range usedPrimitives {
+				if _, seen := primsToUses[prim]; !seen {
+					primsToUses[prim] = make(map[*ssa.Function]struct{})
+				}
+				primsToUses[prim][fun] = struct{}{}
+			}
+		}
+	}
 	return
 }
 
@@ -110,7 +148,7 @@ func isConcurrentCall(cc ssa.CallCommon) (ssa.Value, _CONCURRENT_CALL) {
 	return nil, _NOT_CONCURRENT
 }
 
-func (p Primitives) process(f *ssa.Function, pt *pointer.Result) {
+func (p Primitives) process(f *ssa.Function, pt *pointer.Result, reachableFuns map[*ssa.Function]bool) {
 	fu := newFunc()
 
 	// Functions with no blocks are un-analyzable.
@@ -125,7 +163,9 @@ func (p Primitives) process(f *ssa.Function, pt *pointer.Result) {
 
 	addPrimitive := func(v ssa.Value, update func(ssa.Value)) {
 		for p := range getPrimitives(v, pt) {
-			update(p)
+			if pkgutil.IsLocal(p) && reachableFuns[p.Parent()] {
+				update(p)
+			}
 		}
 	}
 

@@ -1,8 +1,11 @@
 package absint
 
 import (
+	"github.com/cs-au-dk/goat/analysis/defs"
 	"github.com/cs-au-dk/goat/utils"
 	"github.com/cs-au-dk/goat/utils/hmap"
+
+	"github.com/benbjohnson/immutable"
 )
 
 type factory struct{}
@@ -27,10 +30,10 @@ func (absConfigurationHasher) Hash(a *AbsConfiguration) uint32 {
 	return a.Hash()
 }
 
-var achasher utils.Hasher[*AbsConfiguration] = absConfigurationHasher{}
+var achasher immutable.Hasher[*AbsConfiguration] = absConfigurationHasher{}
 
 func (factory) SuperlocGraph(entry *AbsConfiguration) SuperlocGraph {
-	canon := hmap.NewMap[*AbsConfiguration](achasher)
-	canon.Set(entry, entry)
+	canon := hmap.NewMap[*AbsConfiguration](utils.HashableHasher[defs.Superloc]())
+	canon.Set(entry.superloc, entry)
 	return SuperlocGraph{entry: entry, canon: canon}
 }

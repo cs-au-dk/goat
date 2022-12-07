@@ -63,7 +63,7 @@ func (p *ProductLattice) Top() Element {
 		p.top = new(Product)
 		*p.top = newProduct(p)
 		for i, lat := range p.product {
-			p.top.prod = p.top.prod.set(i, lat.Top())
+			(*p.top.prod)[i] = lat.Top()
 		}
 	}
 	return *p.top
@@ -90,8 +90,11 @@ func (p *ProductLattice) String() string {
 	).End(")")
 }
 
-/* TODO: If this is needed we can add some extra code in Get/Update to handle
-lazy updates */
+/*
+	TODO: If this is needed we can add some extra code in Get/Update to handle
+
+lazy updates
+*/
 func (p *ProductLattice) Extend(l Lattice) {
 	p.product = append(p.product, l)
 }

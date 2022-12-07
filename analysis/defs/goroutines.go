@@ -8,8 +8,6 @@ import (
 	"github.com/benbjohnson/immutable"
 )
 
-//go:generate go run generate-hasher.go goro Goroutine Goro
-
 type Goro interface {
 	Hash() uint32
 	Equal(Goro) bool
@@ -58,10 +56,6 @@ func (factory) RootGoro(cl CtrLoc) Goro {
 
 func (factory) IndexedGoro(cl CtrLoc, parent Goro, index int) Goro {
 	return goro{cl, parent, index}
-}
-
-func NewGoroutineMap() *immutable.Map {
-	return immutable.NewMap(hashergoro{})
 }
 
 func (g goro) Hash() (res uint32) {

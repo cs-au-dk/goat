@@ -29,12 +29,13 @@ func TestCompressAndPanicCont(t *testing.T) {
 	program.Build()
 	results := upfront.Andersen(program, ssaPkgs, upfront.IncludeType{All: true})
 
+	cfg := new(Cfg)
 	cfg.init()
 	cfg.fset = program.Fset
 
 	mainFun := ssaPkgs[0].Func("main")
 
-	io := getFunCfg(program, mainFun, results)
+	io := cfg.getFunCfg(program, mainFun, results)
 	cfg.addEntry(io.in)
 
 	// The built-in traversal functions seem to consider the DeferLink, which
@@ -94,7 +95,7 @@ func TestCompressAndPanicCont(t *testing.T) {
 
 	panicToClose("close-beforeCompress")
 
-	compressCfg()
+	compress(cfg)
 
 	//VisualizeFunction(mainFun)
 

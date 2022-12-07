@@ -43,6 +43,7 @@ const (
 	_CYCLES
 	_CHANNEL_ALIASING
 	_CFG_TO_DOT
+	_CALLGRAPH_TO_DOT
 	_ABSTRACT_INTERP
 	_ANALYZE
 	_POINTS_TO
@@ -87,6 +88,9 @@ var task = []struct{ flag, explanation string }{{
 }, {
 	"cfg-to-dot",
 	"Create a graph for the control-flow graph",
+}, {
+	"callgraph-to-dot",
+	"Create a graph for the call graph",
 }, {
 	"abstract-interp",
 	"Perform abstract interpretation",
@@ -216,6 +220,9 @@ func (taskInterface) IsCanBuild() bool {
 }
 func (taskInterface) IsCfgToDot() bool {
 	return opts.task == task[_CFG_TO_DOT].flag
+}
+func (taskInterface) IsCallGraphToDot() bool {
+	return opts.task == task[_CALLGRAPH_TO_DOT].flag
 }
 func (taskInterface) IsChannelAliasingCheck() bool {
 	return opts.task == task[_CHANNEL_ALIASING].flag

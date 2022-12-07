@@ -26,6 +26,7 @@ type funIO struct {
 // Also takes into account control-flow information, dynamic dispatch,
 // as well as calls to defer. Requires points-to information.
 func GetCFG(prog *ssa.Program, mains []*ssa.Package, results *pointer.Result) *Cfg {
+	cfg := new(Cfg)
 	cfg.init()
 	cfg.fset = prog.Fset
 
@@ -36,11 +37,11 @@ func GetCFG(prog *ssa.Program, mains []*ssa.Package, results *pointer.Result) *C
 			case *ssa.Function:
 				switch {
 				case fun.Name() == "init":
-					io := getFunCfg(prog, fun, results)
+					io := cfg.getFunCfg(prog, fun, results)
 					initIn = io.in
 					initOut = io.out
 				case fun.Name() == "main":
-					mainIn = getFunCfg(prog, fun, results).in
+					mainIn = cfg.getFunCfg(prog, fun, results).in
 				}
 			}
 		}
@@ -51,19 +52,19 @@ func GetCFG(prog *ssa.Program, mains []*ssa.Package, results *pointer.Result) *C
 	}
 
 	for _, fun := range pkgutil.TestFunctions(prog) {
-		io := getFunCfg(prog, fun, results)
+		io := cfg.getFunCfg(prog, fun, results)
 		cfg.addEntry(io.in)
 	}
 
 	// fmt.Println("CFG for program:")
-	compressCfg()
+	compress(cfg)
 	// PrintCfg(*cfg)
 
 	return cfg
 }
 
 // Convert function definition to CFG.
-func getFunCfg(prog *ssa.Program, fun *ssa.Function, results *pointer.Result) funIO {
+func (cfg *Cfg) getFunCfg(prog *ssa.Program, fun *ssa.Function, results *pointer.Result) funIO {
 	// Synthetic node configurations for function exit and entry.
 	entryConfig := SynthConfig{
 		Function: fun,
@@ -173,7 +174,7 @@ BLOCK_QUEUE:
 
 						return append(funs, funIO{waiting, waking})
 					}
-					return append(funs, getFunCfg(prog, callee, results))
+					return append(funs, cfg.getFunCfg(prog, callee, results))
 				}
 				// Otherwise handle the value of the callee.
 				switch f := call.Value.(type) {
@@ -196,7 +197,7 @@ BLOCK_QUEUE:
 						if !ok {
 							log.Fatal("Function points to non-function value")
 						}
-						funs = append(funs, getFunCfg(prog, val, results))
+						funs = append(funs, cfg.getFunCfg(prog, val, results))
 					}
 				}
 				return
@@ -220,7 +221,7 @@ BLOCK_QUEUE:
 					log.Fatalf("%v: No ssa.Function for %v", label, call.Method)
 				}
 
-				funs = append(funs, getFunCfg(prog, fun, results))
+				funs = append(funs, cfg.getFunCfg(prog, fun, results))
 			}
 			return
 		}

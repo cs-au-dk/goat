@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cs-au-dk/goat/testutil"
+	tu "github.com/cs-au-dk/goat/testutil"
 )
 
 func cfgTestPackage(t *testing.T, pkg string) {
@@ -15,7 +15,10 @@ func cfgTestPackage(t *testing.T, pkg string) {
 		}
 	}()
 
-	testutil.LoadExamplePackage(t, "../..", pkg)
+	t.Parallel()
+	tu.ParallelHelper(t,
+		tu.LoadExampleAsPackages(t, "../..", pkg, false),
+		func(tu.LoadResult) {})
 }
 
 func runCfgTestsOnPackages(t *testing.T, pkgs []string) {
@@ -35,7 +38,7 @@ func runCfgTestsOnPackages(t *testing.T, pkgs []string) {
 }
 
 func TestCfgSimple(t *testing.T) {
-	runCfgTestsOnPackages(t, testutil.ListSimpleTests(t, "../.."))
+	runCfgTestsOnPackages(t, tu.ListSimpleTests(t, "../.."))
 }
 
 func TestCfgNoSelect(t *testing.T) {
@@ -119,5 +122,5 @@ wiki`, "\n")[1:]
 }
 
 func TestCfgGoKer(t *testing.T) {
-	runCfgTestsOnPackages(t, testutil.ListGoKerPackages(t, "../.."))
+	runCfgTestsOnPackages(t, tu.ListGoKerPackages(t, "../.."))
 }

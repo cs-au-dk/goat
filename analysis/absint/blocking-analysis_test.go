@@ -469,21 +469,61 @@ func TestBlockingAnalysis(t *testing.T) {
 		}, {
 			"infinite-loop-soundness-issue",
 			at(ann.Goro(goro(0), true, root, g(0))) + `
+			func ubool() bool
 			func main() {
 				ch := make(chan int)
 				go func() { ` + at(ann.Go(g(0))) + `
 					ch <- 10 ` + at(ann.Blocks(goro(0)), ann.FalseNegative()) + `
 				}()
 
-				// Get a top value
-				sl := []bool{true, false}
-				top := sl[0]
-
-				if top {
+				if ubool() {
 					<-ch
 				}
 
 				for { }
+			}`,
+			BlockAnalysisTest,
+		}, {
+			"infinite-loop-comm-semantics",
+			// Here we have to distinguish between what is possible in a real
+			// program execution versus in our model of executions.
+			// If ubool() always returns false, the send operation on ch may
+			// block forever. However, our model encodes all infinite traces
+			// where ubool() may return either true or false in each call.
+			// Therefore, the model contains a trace that unblocks the send
+			// operation, which is the condition for _not_ reporting a blocking
+			// error, so the correct "answer" is that the send operation may
+			// release.
+			at(ann.Goro(main, true, root), ann.Goro(goro(0), true, root, g(0))) + `
+			func ubool() bool
+			func main() {
+				ch := make(chan int)
+				go func() { ` + at(ann.Go(g(0))) + `
+					ch <- 10 ` + at(ann.MayRelease(goro(0))) + `
+				}()
+
+				for {
+					if ubool() {
+						<-ch ` + at(ann.Blocks(main)) + `
+					}
+				}
+			}`,
+			BlockAnalysisTest,
+		}, {
+			"infinite-loop-w-potential-panic",
+			at(ann.Goro(goro(0), true, root, g(0))) + `
+			func ubool() bool
+			func main() {
+				ch := make(chan int)
+				go func() { ` + at(ann.Go(g(0))) + `
+					ch <- 10 ` + at(ann.Blocks(goro(0)), ann.FalseNegative()) + `
+				}()
+
+				for {
+					if ubool() {
+						panic("oh no")
+					}
+				}
 			}`,
 			BlockAnalysisTest,
 		}, {
@@ -554,8 +594,23 @@ func TestBlockingAnalysis(t *testing.T) {
 				mu.Lock() ` + at(ann.MayRelease(main)) + `
 			}`,
 			BlockAnalysisTest,
-		},
-		{
+		}, {
+			"mutex-maybe-nil-test",
+			`import "sync"
+			 func ubool() bool
+			 ` + at(ann.Goro(main, true, root),
+				ann.Goro(g(0), true, root, g(0))) + `
+			func main() {
+				mu := &sync.Mutex{}
+				mu.Lock() ` + at(ann.MayRelease(main)) + `
+				go func() { ` + at(ann.Go(g(0))) + `
+					myMu := mu
+					if ubool() { myMu = nil }
+					myMu.Lock() ` + at(ann.Blocks(g(0))) + `
+				}()
+			}`,
+			BlockAnalysisTest,
+		}, {
 			"matching-for-loops",
 			at(ann.Goro(main, true, root),
 				ann.Goro(g(0), true, root, g(0))) + `
@@ -626,6 +681,43 @@ func TestBlockingAnalysis(t *testing.T) {
 			BlockAnalysisTest,
 		},
 		{
+			// This program will generate a FP unless we disable both loop
+			// inlining and change how dominator computation works (it should
+			// be main, not the anonymous goroutine function, otherwise we will
+			// only see one spawn).
+			"loop-inline-and-dominator-fp",
+			`import "sync"
+			func main() {
+				var mu sync.Mutex
+				var ch chan int
+				for i := 0; i < 2; i++ {
+					go func() {
+						mu.Lock()
+						if ch == nil { ch = make(chan int) }
+						mu.Unlock()
+
+						select { //@ releases, fp
+						case <-ch:
+						case ch <- 10:
+						}
+					}()
+				}
+			}`,
+			BlockAnalysisTest,
+		},
+		{
+			"guaranteed-panic-fp",
+			`func main() {
+				ch := make(chan int, 1)
+				go func() {
+					<-ch //@ releases
+				}()
+				ch <- 10 //@ releases
+				panic("Oh no")
+			}`,
+			BlockAnalysisTest,
+		},
+		{
 			// See TODO in absint of FunctionExit
 			"[disabled] comm-separated-calls",
 			at(ann.Goro(main, true, root), ann.Goro(g(0), true, root, g(0))) + `
@@ -664,11 +756,9 @@ func TestBlockingAnalysis(t *testing.T) {
 			t.Fatal("Failed to load packages:", err)
 		}
 
-		if len(pkgs) != 3 {
-			t.Fatal("Expected 3 packages, got:", len(pkgs), pkgs)
+		if len(pkgs) != 2 {
+			t.Fatal("Expected 2 packages, got:", len(pkgs), pkgs)
 		}
-
-		pkgs = pkgs[1:]
 
 		prog, ssaPkgs := ssautil.AllPackages(pkgs, 0)
 		prog.Build()
@@ -697,5 +787,73 @@ func TestBlockingAnalysis(t *testing.T) {
 		S, result := StaticAnalysis(C)
 
 		BlockAnalysisTest(t, C, result, S, manager)
+	})
+
+	nilChTests := []absIntCommTest{
+		{"recv-blocks", `
+			func main() {
+				var nilch chan int
+				<-nilch //@ blocks
+				<-make(chan int)
+			}`,
+			BlockAnalysisTest,
+		},
+		{"send-blocks", `
+			func main() {
+				var nilch chan int
+				nilch <- 10 //@ blocks
+				<-make(chan int)
+			}`,
+			BlockAnalysisTest,
+		},
+		{"select-blocks", `
+			func main() {
+				var nilch chan int
+				select { //@ blocks
+				case <-nilch:
+				case nilch <- 10:
+				}
+				<-make(chan int)
+			}`,
+			BlockAnalysisTest,
+		},
+		{"select-impossible-branch", `
+			func main() {
+				var nilch chan int
+				ch := make(chan int, 1)
+				select { //@ releases
+				case <-nilch: ch <- 10
+				default:
+				}
+				<-ch //@ blocks
+			}`,
+			BlockAnalysisTest,
+		},
+		{"select-impossible-branch-2", `
+			func main() {
+				var nilch chan int
+				ch := make(chan int, 1)
+				select { //@ releases
+				case <-nilch: ch <- 10
+				case ch <- 10:
+					// Empty buffer again
+					<-ch //@ releases
+				}
+				<-ch //@ blocks
+			}`,
+			BlockAnalysisTest,
+		},
+	}
+
+	t.Run("focused-w-nil", func(t *testing.T) {
+		for _, test := range nilChTests {
+			t.Run(test.name, func(t *testing.T) {
+				loadRes := tu.LoadPackageFromSource(t, "testpackage", "package main\n\n"+test.content)
+				if err := pkgutil.GetLocalPackages(loadRes.Mains, loadRes.Prog.AllPackages()); err != nil {
+					t.Fatal(err)
+				}
+				runFocusedPrimitiveTests(t, loadRes, test.fun)
+			})
+		}
 	})
 }

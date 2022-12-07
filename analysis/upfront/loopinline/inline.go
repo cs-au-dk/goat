@@ -262,15 +262,22 @@ func InlineLoops(pkgs []*packages.Package) (rerr error) {
 		}
 
 		// Recompute type information on new AST
+		// Mirrors the way type information is computed when package is initially
+		// loaded in go/packages/packages.go:loadPackage
 		info := &types.Info{
-			Types:      make(map[ast.Expr]types.TypeAndValue),
-			Defs:       make(map[*ast.Ident]types.Object),
-			Uses:       make(map[*ast.Ident]types.Object),
-			Implicits:  make(map[ast.Node]types.Object),
+			Types:     make(map[ast.Expr]types.TypeAndValue),
+			Defs:      make(map[*ast.Ident]types.Object),
+			Uses:      make(map[*ast.Ident]types.Object),
+			Implicits: make(map[ast.Node]types.Object),
+			// loadPackage calls a function to initialize this field (?), but
+			// it is in an internal package, so we just do it directly.
+			Instances:  make(map[*ast.Ident]types.Instance),
 			Scopes:     make(map[ast.Node]*types.Scope),
 			Selections: make(map[*ast.SelectorExpr]*types.Selection),
 		}
+
 		tpkg := newPkgs[pkg.Types]
+		// Replace imported packages with transformed versions (if applicable)
 		imps := pkg.Types.Imports()
 		for i, tpkg := range imps {
 			if npkg, found := newPkgs[tpkg]; found {

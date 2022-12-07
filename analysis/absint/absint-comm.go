@@ -4,6 +4,7 @@ import (
 	"go/types"
 	"log"
 
+	"github.com/cs-au-dk/goat/analysis/absint/leaf"
 	A "github.com/cs-au-dk/goat/analysis/absint/ops"
 	"github.com/cs-au-dk/goat/analysis/cfg"
 	"github.com/cs-au-dk/goat/analysis/defs"
@@ -35,7 +36,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 			//if !s.Threads()[tid1].Node.IsCommunicationNode() {
 			S.succUpdate(Successor{
 				s.Copy().DeriveThread(tid1, c1),
-				T.In{Progressed: tid1},
+				T.NewIn(tid1),
 			}, state)
 		}
 	}
@@ -82,7 +83,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 		for c1 := range leaves[g1] {
 			switch n1 := c1.Node().(type) {
 			// A Cond value wakes some goroutine
-			case *cfg.CondWaking:
+			case *leaf.CondWaking:
 				mops := L.MemOps(mem)
 				condVal := mops.GetUnsafe(n1.Cnd)
 				// Reset locker points-to set
@@ -99,7 +100,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 						s.Copy().DeriveThread(
 							g1,
 							c1.Derive(n1.Predecessor().Successor())),
-						T.Wake{Progressed: g1, Cond: n1.Cnd},
+						T.NewWake(g1, n1.Cnd),
 					}, mops.Memory())
 					continue
 				}
@@ -140,11 +141,11 @@ func (s *AbsConfiguration) GetCommSuccessors(
 						s.Copy().DeriveThread(
 							g1,
 							c1.Derive(n1.Predecessor().Successor())),
-						T.Wake{Progressed: g1, Cond: n1.Cnd},
+						T.NewWake(g1, n1.Cnd),
 					}, mops.Memory())
 				}
 			// A Cond value wants to put some goroutine to sleep
-			case *cfg.CondWait:
+			case *leaf.CondWait:
 				newMem := mem
 
 				// Get Cond value
@@ -163,7 +164,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 					updMem(Successor{
 						// Should step into a Waiting node
 						s.Copy().DeriveThread(g1, c1.Predecessor().Successor()),
-						T.Wait{Progressed: g1, Cond: n1.Cnd},
+						T.NewWait(g1, n1.Cnd),
 					}, mops.Memory())
 					continue
 				}
@@ -217,7 +218,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 					updMem(Successor{
 						// Should step into a Waiting node
 						s.Copy().DeriveThread(g1, c1.Predecessor().Successor()),
-						T.Wait{Progressed: g1, Cond: n1.Cnd},
+						T.NewWait(g1, n1.Cnd),
 					}, mops.Memory())
 				}
 				if freshFailCond.Cond().HasLockers() {
@@ -225,10 +226,10 @@ func (s *AbsConfiguration) GetCommSuccessors(
 						// Should step into the panic continuation (tried to unlock unlocked
 						// mutex)
 						s.Copy().DeriveThread(g1, c1.Predecessor().Panic()),
-						T.In{Progressed: g1},
+						T.NewIn(g1),
 					}, mem)
 				}
-			case *cfg.CondSignal:
+			case *leaf.CondSignal:
 				// Refines the .Signal() Cond receiver.
 				refinedMem := attemptValueRefine(g1, mem, n1.Cond(), Elements().AbstractPointerV(n1.Cnd))
 
@@ -244,7 +245,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 
 					for c2 := range leaves[g2] {
 						switch n2 := c2.Node().(type) {
-						case *cfg.CondWaiting:
+						case *leaf.CondWaiting:
 							if n1.Cnd == n2.Cnd {
 								// A guaranteed partner was found only if the Cond
 								// primitive is not multiallocated.
@@ -289,7 +290,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 					}, refinedMem)
 				}
 
-			case *cfg.CondBroadcast:
+			case *leaf.CondBroadcast:
 				// Compute all the goroutine progress candidates with their
 				// associated control location.
 				candidates := make(map[defs.Goro]defs.CtrLoc)
@@ -301,7 +302,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 
 					for c2 := range leaves[g2] {
 						switch n2 := c2.Node().(type) {
-						case *cfg.CondWaiting:
+						case *leaf.CondWaiting:
 							// A control location for a goroutine is a candidate if
 							// it may wait on the same Cond construct
 							if n1.Cnd == n2.Cnd {
@@ -367,7 +368,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 					})
 				}
 
-			case *cfg.MuLock:
+			case *leaf.MuLock:
 				// Get abstract location of mutex operand
 				opReg := n1.Predecessor().Locker()
 
@@ -375,9 +376,9 @@ func (s *AbsConfiguration) GetCommSuccessors(
 				A.Lock(L.MemOps(mem).GetUnsafe(n1.Loc)).OnSucceed(
 					mutexOutcomeUpdate(
 						c1.Predecessor().CallRelationNode(),
-						T.Lock{Progressed: g1, Mu: n1.Loc},
+						T.NewLock(g1, n1.Loc),
 						opReg, n1.Loc, g1, mem))
-			case *cfg.MuUnlock:
+			case *leaf.MuUnlock:
 				// Get abstract location of mutex operand
 				opReg := n1.Predecessor().Locker()
 
@@ -386,15 +387,15 @@ func (s *AbsConfiguration) GetCommSuccessors(
 					OnSucceed(
 						mutexOutcomeUpdate(
 							c1.Predecessor().CallRelationNode(),
-							T.Unlock{Progressed: g1, Mu: n1.Loc},
+							T.NewUnlock(g1, n1.Loc),
 							opReg, n1.Loc, g1, mem),
 					).
 					OnPanic(
 						mutexOutcomeUpdate(
 							c1.Predecessor().Panic(),
-							T.Unlock{Progressed: g1, Mu: n1.Loc},
+							T.NewUnlock(g1, n1.Loc),
 							opReg, n1.Loc, g1, mem))
-			case *cfg.RWMuRLock:
+			case *leaf.RWMuRLock:
 				// Get abstract location of read mutex operand
 				opReg := n1.Predecessor().Locker()
 
@@ -402,9 +403,9 @@ func (s *AbsConfiguration) GetCommSuccessors(
 					OnSucceed(
 						mutexOutcomeUpdate(
 							c1.Predecessor().CallRelationNode(),
-							T.Lock{Progressed: g1, Mu: n1.Loc},
+							T.NewRLock(g1, n1.Loc),
 							opReg, n1.Loc, g1, mem))
-			case *cfg.RWMuRUnlock:
+			case *leaf.RWMuRUnlock:
 				// Get abstract location of read mutex operand
 				opReg := n1.Predecessor().Locker()
 
@@ -412,14 +413,14 @@ func (s *AbsConfiguration) GetCommSuccessors(
 				A.RUnlock(L.MemOps(mem).GetUnsafe(n1.Loc)).OnSucceed(
 					mutexOutcomeUpdate(
 						c1.Predecessor().CallRelationNode(),
-						T.Lock{Progressed: g1, Mu: n1.Loc},
+						T.NewRUnlock(g1, n1.Loc),
 						opReg, n1.Loc, g1, mem),
 				).OnPanic(
 					mutexOutcomeUpdate(
 						c1.Predecessor().Panic(),
-						T.Lock{Progressed: g1, Mu: n1.Loc},
+						T.NewRUnlock(g1, n1.Loc),
 						opReg, n1.Loc, g1, mem))
-			case *cfg.CommSend:
+			case *leaf.CommSend:
 				// Get abstract location of the channel operand in the instruction.
 				opReg1 := n1.Predecessor().Channel()
 
@@ -439,7 +440,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 						refinedMem := attemptValueRefine(g1, mem, opReg1, Elements().AbstractPointerV(n1.Loc))
 						updMem(Successor{
 							s.Copy().DeriveThread(g1, cl),
-							T.Send{Progressed: g1, Chan: n1.Loc},
+							T.NewSend(g1, n1.Loc),
 						}, refinedMem.Update(
 							// Update channel value in memory
 							n1.Loc, val,
@@ -471,7 +472,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 
 					for c2 := range leaves[g2] {
 						switch n2 := c2.Node().(type) {
-						case *cfg.CommRcv:
+						case *leaf.CommRcv:
 							// Since we're overapproximating possible synchronizations,
 							// it's okay if the location might correspond to multiple concrete objects.
 							// (I.e. ALLOC flag is ⊤.)
@@ -544,7 +545,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 						}
 					}
 				}
-			case *cfg.CommRcv:
+			case *leaf.CommRcv:
 				// Get abstract location of the channel operand in the instruction.
 				opReg := c1.Node().Predecessor().Channel()
 
@@ -604,7 +605,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 
 						updMem(Successor{
 							s.Copy().DeriveThread(g1, c1.Predecessor().Successor()),
-							T.Receive{Progressed: g1, Chan: n1.Loc},
+							T.NewReceive(g1, n1.Loc),
 						}, newMem.Update(
 							// Update channel value in memory
 							n1.Loc, val,
@@ -644,7 +645,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 							}
 							updMem(Successor{
 								s.Copy().DeriveThread(g1, cl),
-								T.Close{Progressed: g1, Op: n1.Arg(0)},
+								T.NewClose(g1, n1.Arg(0)),
 							},
 								// The channel may be part of the operand's points-to set.
 								attemptValueRefine(g1, newMem, opReg, Elements().AbstractPointerV(chLoc)),
@@ -671,7 +672,7 @@ func (s *AbsConfiguration) GetCommSuccessors(
 			case *cfg.TerminateGoro:
 				S.succUpdate(Successor{
 					s.Copy().DeriveThread(g1, c1),
-					T.In{Progressed: g1},
+					T.NewIn(g1),
 				}, state)
 			default:
 				simpleLeaf(g1, c1)

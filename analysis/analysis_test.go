@@ -65,7 +65,7 @@ func analyzePackage(t *testing.T, pkg string) {
 	analysisContext := ai.PrepareAI().WholeProgram(loadRes)
 	slocG, result := ai.StaticAnalysis(analysisContext)
 	if utils.Opts().Visualize() {
-		slocG.Entry().Visualize()
+		slocG.Visualize(nil)
 	}
 
 	t.Logf("Abstract configuration graph contains %d superlocations.", result.Size())

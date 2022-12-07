@@ -1,6 +1,10 @@
 package hmap
 
-import "github.com/cs-au-dk/goat/utils"
+import (
+	"github.com/cs-au-dk/goat/utils"
+
+	"github.com/benbjohnson/immutable"
+)
 
 // A simple implementation of a mutable hash map.
 // Useful when we cannot use Go's maps directly, and we want to avoid the
@@ -15,16 +19,20 @@ type node[K, V any] struct {
 }
 
 type Map[K, V any] struct {
-	hasher utils.Hasher[K]
+	hasher immutable.Hasher[K]
 	mp     map[uint32]*node[K, V]
 }
 
 // Order of V and K are swapped since K can be inferred by the argument.
-func NewMap[V, K any](hasher utils.Hasher[K]) *Map[K, V] {
+func NewMap[V, K any](hasher immutable.Hasher[K]) *Map[K, V] {
 	return &Map[K, V]{
 		hasher: hasher,
 		mp:     make(map[uint32]*node[K, V]),
 	}
+}
+
+func NewMapH[K utils.HashableEq[K], V any]() *Map[K, V] {
+	return NewMap[V](utils.HashableHasher[K]())
 }
 
 func (m *Map[K, V]) Set(key K, value V) {

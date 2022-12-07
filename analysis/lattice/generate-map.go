@@ -16,8 +16,8 @@ func main() {
 	keyType := os.Args[2]
 	valueType := os.Args[3]
 	templateSrc := "map-wrapper-template.go"
-	if len(os.Args) > 4 && os.Args[4] == "finite" {
-		templateSrc = "map-finite-wrapper-template.go"
+	if len(os.Args) > 4 {
+		templateSrc = "map-" + os.Args[4] + "-wrapper-template.go"
 	}
 
 	startfilename := strings.TrimSuffix(os.Getenv("GOFILE"), ".go")

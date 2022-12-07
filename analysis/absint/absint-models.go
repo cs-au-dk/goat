@@ -106,13 +106,13 @@ func (C AnalysisCtxt) stdCall(
 		if namedTimerType.Obj().Name() == "Ticker" {
 			// Closing the channel is not sound, but it is an easy way to allow infinite messages.
 			chVal = makeChannelValue(
-				Elements().Constant(0),
+				Elements().FlatInt(0),
 				false,
 				0,
 			)
 		} else {
 			chVal = makeChannelValue(
-				Elements().Constant(1),
+				Elements().FlatInt(1),
 				true,
 				1,
 			)
@@ -175,7 +175,7 @@ func (C AnalysisCtxt) stdCall(
 	switch funName {
 	case "time.After":
 		val := makeChannelValue(
-			Elements().Constant(1),
+			Elements().FlatInt(1),
 			true,
 			1,
 		)

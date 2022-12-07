@@ -5,6 +5,7 @@ import (
 
 	"github.com/cs-au-dk/goat/analysis/defs"
 	loc "github.com/cs-au-dk/goat/analysis/location"
+	"github.com/cs-au-dk/goat/utils"
 	i "github.com/cs-au-dk/goat/utils/indenter"
 )
 
@@ -20,7 +21,7 @@ func (a *AnalysisLattice) Bot() Element {
 	el := element{a}
 	return Analysis{
 		el,
-		baseMap{el, defs.NewSuperlocationMap()},
+		baseMap[defs.Superloc]{el, utils.NewImmMap[defs.Superloc, Element]()},
 	}
 }
 

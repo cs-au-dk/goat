@@ -55,7 +55,7 @@ func EmptyIntraprocessWorklist(prios u.CtrLocPriorities) pq.PriorityQueue[CtrLoc
 			}
 
 			// TODO: We should probably use instruction index here, but it's a bit complicated to get.
-			phasher := utils.PointerHasher{}
+			phasher := utils.PointerHasher[cfg.Node]{}
 			return phasher.Hash(a.Node()) < phasher.Hash(b.Node())
 		} else {
 			p1, f1 := funPriorities[fa]

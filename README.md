@@ -15,7 +15,7 @@ go generate ./...
 Now the Goat tool can be built:
 
 ```bash
-go build Goat
+go build github.com/cs-au-dk/goat
 ```
 
 To visualize graphs the `xdot` tool must be installed on your system (but it is not required to run the tool).
@@ -44,7 +44,7 @@ func main() {
 Run the following command:
 
 ```bash
-./Goat -gopath examples -task collect-primitives -metrics -psets gcatch simple-examples/sync-two-goros-race
+./goat -gopath examples -task collect-primitives -metrics -psets gcatch simple-examples/sync-two-goros-race
 ```
 
 The tool outputs two bug reports:
@@ -92,11 +92,7 @@ To run the analysis on the `raft` module of [`etcd`](https://github.com/etcd-io/
 ```bash
 mkdir tmp
 git clone https://github.com/etcd-io/etcd --branch release-3.5
-./Goat -gopath tmp -modulepath etcd/raft \
+./goat -gopath tmp -modulepath etcd/raft \
        -task collect-primitives -metrics -psets gcatch -include-tests \
        go.etcd.io/etcd/raft/v3
 ```
-
-### Notes
-
-Analyzing code that uses generics is currently not supported.

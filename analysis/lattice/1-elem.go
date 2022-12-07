@@ -153,14 +153,6 @@ func (oneElementLatticeElement) Lifted() *LiftedBot {
 	panic(errUnsupportedTypeConversion)
 }
 
-func (oneElementLatticeElement) Map() Map {
-	panic(errUnsupportedTypeConversion)
-}
-
-func (oneElementLatticeElement) InfiniteMap() InfiniteMap {
-	panic(errUnsupportedTypeConversion)
-}
-
 func (oneElementLatticeElement) Memory() Memory {
 	panic(errUnsupportedTypeConversion)
 }

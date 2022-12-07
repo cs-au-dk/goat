@@ -8,8 +8,8 @@ func TestProductComparison(t *testing.T) {
 	var T = Create().Lattice().TwoElement().Top()
 	powLat := Create().Lattice().PowersetVariadic("a", "b")
 	setFactory := Create().Element().Powerset(powLat)
-	mapLat := Create().Lattice().MapVariadic(Create().Lattice().TwoElement(), "a", "b")
-	mapFactory := Create().Element().Map(mapLat)
+	mapLat := MakeMapLatticeVariadic[string](Create().Lattice().TwoElement(), "a", "b")
+	mapFactory := MakeMap[string](mapLat)
 	prodLat := Create().Lattice().Product(mapLat, powLat)
 	prodFactory := Create().Element().Product(prodLat)
 
@@ -73,8 +73,8 @@ func TestProductJoin(t *testing.T) {
 	var T = Create().Lattice().TwoElement().Top()
 	powLat := Create().Lattice().PowersetVariadic("a", "b")
 	setFactory := Create().Element().Powerset(powLat)
-	mapLat := Create().Lattice().MapVariadic(Create().Lattice().TwoElement(), "a", "b")
-	mapFactory := Create().Element().Map(mapLat)
+	mapLat := MakeMapLatticeVariadic[string](Create().Lattice().TwoElement(), "a", "b")
+	mapFactory := MakeMap[string](mapLat)
 	prodLat := Create().Lattice().Product(mapLat, powLat)
 	prodFactory := Create().Element().Product(prodLat)
 

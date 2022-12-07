@@ -21,17 +21,18 @@ func (m mapLatticeBase) RngBot() Element {
 	return m.rng.Bot()
 }
 
-type MapLattice struct {
+type MapLattice[K any] struct {
 	mapLatticeBase
-	top *Map
-	bot *Map
+	top *Map[K]
+	bot *Map[K]
 	dom set
 }
 
 // Create a map lattice. Provide a range lattice,
 // and a domain.
-func (latticeFactory) Map(rng Lattice, dom set) *MapLattice {
-	m := new(MapLattice)
+// func (latticeFactory) Map(rng Lattice, dom set) *MapLattice {
+func MakeMapLattice[K any](rng Lattice, dom set) *MapLattice[K] {
+	m := new(MapLattice[K])
 	m.dom = make(set)
 	for x := range dom {
 		m.dom[x] = true
@@ -40,8 +41,9 @@ func (latticeFactory) Map(rng Lattice, dom set) *MapLattice {
 	return m
 }
 
-func (latticeFactory) MapVariadic(rng Lattice, dom ...interface{}) *MapLattice {
-	m := new(MapLattice)
+// func (latticeFactory) MapVariadic(rng Lattice, dom ...interface{}) *MapLattice[K] {
+func MakeMapLatticeVariadic[K any](rng Lattice, dom ...interface{}) *MapLattice[K] {
+	m := new(MapLattice[K])
 	m.dom = make(set)
 	for _, x := range dom {
 		m.dom[x] = true
@@ -50,38 +52,38 @@ func (latticeFactory) MapVariadic(rng Lattice, dom ...interface{}) *MapLattice {
 	return m
 }
 
-func (l *MapLattice) Top() Element {
+func (l *MapLattice[K]) Top() Element {
 	if l.top == nil {
-		l.top = new(Map)
-		mp := immutable.NewMapBuilder(nil)
+		l.top = new(Map[K])
+		mp := immutable.NewMapBuilder[K, Element](nil)
 		for x := range l.dom {
-			mp.Set(x, l.rng.Top())
+			mp.Set(x.(K), l.rng.Top())
 		}
-		*l.top = Map{
-			MapBase{
+		*l.top = Map[K]{
+			baseMap[K]{
 				element{l},
-				elementMap{mp.Map()},
+				mp.Map(),
 			},
 		}
 	}
 	return *l.top
 }
 
-func (l *MapLattice) Bot() Element {
+func (l *MapLattice[K]) Bot() Element {
 	if l.bot == nil {
-		l.bot = new(Map)
-		*l.bot = newMap(l)
+		l.bot = new(Map[K])
+		*l.bot = newMap[K](l)
 	}
 	return *l.bot
 }
 
-func (l1 *MapLattice) Eq(l2 Lattice) bool {
+func (l1 *MapLattice[K]) Eq(l2 Lattice) bool {
 	// First try to get away with referential equality
 	if l1 == l2 {
 		return true
 	}
 	switch l2 := l2.(type) {
-	case *MapLattice:
+	case *MapLattice[K]:
 		for x := range l1.dom {
 			if contains, ok := l2.dom[x]; !contains || !ok {
 				return false
@@ -102,7 +104,7 @@ func (l1 *MapLattice) Eq(l2 Lattice) bool {
 	}
 }
 
-func (l *MapLattice) String() string {
+func (l *MapLattice[K]) String() string {
 	strs := []fmt.Stringer{}
 
 	for x := range l.dom {
@@ -114,20 +116,20 @@ func (l *MapLattice) String() string {
 	return i.Indenter().Start("{").NestSep(",", strs...).End("} → " + l.rng.String())
 }
 
-func (l *MapLattice) Range() Lattice {
+func (l *MapLattice[K]) Range() Lattice {
 	return l.rng
 }
 
-func (l *MapLattice) Domain() set {
+func (l *MapLattice[K]) Domain() set {
 	return l.dom
 }
 
 // Specifies whether the map lattice domain includes x
-func (e *MapLattice) Contains(x interface{}) bool {
+func (e *MapLattice[K]) Contains(x interface{}) bool {
 	_, ok := e.dom[x]
 	return ok
 }
 
-func (e *MapLattice) Map() *MapLattice {
+func (e *MapLattice[K]) Map() *MapLattice[K] {
 	return e
 }

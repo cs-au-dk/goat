@@ -58,9 +58,7 @@ func (m PointsTo) Entries() (ret []loc.Location) {
 }
 
 func (m PointsTo) ForEach(do func(loc.Location)) {
-	m.mem.ForEach(func(k loc.Location, _ struct{}) {
-		do(k.(loc.Location))
-	})
+	m.mem.ForEach(func(k loc.Location, _ struct{}) { do(k) })
 }
 
 func (m PointsTo) NonNilEntries() []loc.Location {

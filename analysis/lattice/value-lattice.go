@@ -19,7 +19,7 @@ var valueLattice = func() *AbstractValueLattice {
 		Lift(channelInfoLattice),
 		// Struct abstract value lattice. A map infinite in the domain, "Fields"
 		// (an alias for constants), ranging over a lifted, dropped infiinite map
-		Lift(Drop(latFact.InfiniteMap(nil, "Fields"))),
+		Lift(Drop(MakeInfiniteMapLattice[any](nil, "Fields"))),
 		// Constant propagation element for basic values.
 		latFact.ConstantPropagation(),
 		// Mutex information for mutex "allocation sites"
@@ -33,7 +33,7 @@ var valueLattice = func() *AbstractValueLattice {
 	)
 
 	val := &AbstractValueLattice{prod}
-	prod.Get(_STRUCT_VALUE).InfiniteMap().rng = val
+	unwrapLattice[*InfiniteMapLattice[any]](prod.Get(_STRUCT_VALUE)).rng = val
 
 	return val
 }()

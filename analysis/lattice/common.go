@@ -3,13 +3,10 @@ package lattice
 import (
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/cs-au-dk/goat/utils"
 
 	"github.com/fatih/color"
-
-	"github.com/benbjohnson/immutable"
 )
 
 var opts = utils.Opts()
@@ -69,10 +66,8 @@ type Element interface {
 	Dropped() *DroppedTop
 	Flat() FlatElement
 	FlatInt() FlatIntElement
-	InfiniteMap() InfiniteMap
 	Interval() Interval
 	Lifted() *LiftedBot
-	Map() Map
 	Memory() Memory
 	OpOutcomes() OpOutcomes
 	PointsTo() PointsTo
@@ -160,14 +155,6 @@ func (element) Lifted() *LiftedBot {
 	panic(errUnsupportedTypeConversion)
 }
 
-func (element) Map() Map {
-	panic(errUnsupportedTypeConversion)
-}
-
-func (element) InfiniteMap() InfiniteMap {
-	panic(errUnsupportedTypeConversion)
-}
-
 func (element) Memory() Memory {
 	panic(errUnsupportedTypeConversion)
 }
@@ -210,90 +197,4 @@ func (element) AnalysisState() AnalysisState {
 
 func (element) Height() int {
 	panic(errUnsupportedOperation)
-}
-
-type elementList struct {
-	*immutable.List
-}
-
-func (el elementList) foreach(do func(index int, e Element)) {
-	iter := el.Iterator()
-	for !iter.Done() {
-		index, ep := iter.Next()
-		do(index, ep.(Element))
-	}
-}
-
-func (el elementList) set(i int, e Element) elementList {
-	return elementList{el.Set(i, e)}
-}
-
-func (el elementList) get(i int) Element {
-	return el.Get(i).(Element)
-}
-
-func (el elementList) forall(pred func(i int, e Element) bool) bool {
-	iter := el.Iterator()
-	for !iter.Done() {
-		i, ep := iter.Next()
-		e := ep.(Element)
-		if !pred(i, e) {
-			return false
-		}
-	}
-	return true
-}
-
-type elementMap struct {
-	*immutable.Map
-}
-
-func (em elementMap) foreach(do func(key interface{}, e Element)) {
-	iter := em.Iterator()
-	for !iter.Done() {
-		key, e := iter.Next()
-		do(key, e.(Element))
-	}
-}
-
-func (em elementMap) get(key interface{}) (Element, bool) {
-	if ep, found := em.Get(key); found {
-		return ep.(Element), true
-	} else {
-		return nil, false
-	}
-}
-
-func (em elementMap) getUnsafe(key interface{}) Element {
-	ep, found := em.get(key)
-	if found {
-		return ep
-	}
-	panic(errInternal)
-}
-
-func (em elementMap) set(key interface{}, e Element) elementMap {
-	return elementMap{em.Set(key, e)}
-}
-
-func (em elementMap) forall(pred func(key interface{}, e Element) bool) bool {
-	iter := em.Iterator()
-	for !iter.Done() {
-		k, ep := iter.Next()
-		e := ep.(Element)
-		if !pred(k, e) {
-			return false
-		}
-	}
-	return true
-}
-
-func (em elementMap) String() string {
-	iter := em.Iterator()
-	str := []string{}
-	for !iter.Done() {
-		k, ep := iter.Next()
-		str = append(str, fmt.Sprintf("%s -> %s", k, ep))
-	}
-	return "Underlying elementMap: [" + strings.Join(str, ", ") + "]"
 }

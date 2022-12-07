@@ -60,14 +60,6 @@ func (l *Lifted) Interval() *IntervalLattice {
 	return l.Lattice.Interval()
 }
 
-func (l *Lifted) Map() *MapLattice {
-	return l.Lattice.Map()
-}
-
-func (l *Lifted) InfiniteMap() *InfiniteMapLattice {
-	return l.Lattice.InfiniteMap()
-}
-
 func (l *Lifted) Powerset() *Powerset {
 	return l.Lattice.Powerset()
 }

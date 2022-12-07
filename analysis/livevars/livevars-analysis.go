@@ -46,7 +46,7 @@ func findExits(n cfg.Node) (exits map[cfg.Node]bool) {
 	return
 }
 
-func LiveVars(G cfg.Cfg, pt *pointer.Result) *immutable.Map {
+func LiveVars(G cfg.Cfg, pt *pointer.Result) *immutable.Map[cfg.Node, L.Element] {
 	log.Println("Starting channel liveness analysis...")
 
 	getAllMakeChans(G)
@@ -59,10 +59,10 @@ func LiveVars(G cfg.Cfg, pt *pointer.Result) *immutable.Map {
 	liveVars := L.Create().Element().Map(liveLattice)(nil)
 	*/
 	liftedChanLattice := L.Lift(chanLattice)
-	liveVars := immutable.NewMap(utils.PointerHasher{})
+	liveVars := immutable.NewMap[cfg.Node, L.Element](utils.PointerHasher[cfg.Node]{})
 	getOrBot := func(key cfg.Node) L.Element {
 		if val, ok := liveVars.Get(key); ok {
-			return val.(L.Element)
+			return val
 		} else {
 			return liftedChanLattice.Bot()
 		}

@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 
-	loc "github.com/cs-au-dk/goat/analysis/location"
 	"github.com/cs-au-dk/goat/utils"
 
 	"golang.org/x/tools/go/ssa"
@@ -134,14 +133,6 @@ type selectChnSynthetic struct {
 	Parent *Select
 	pos    token.Pos
 }
-type CommSend struct {
-	Synthetic
-	Loc loc.AddressableLocation
-}
-type CommRcv struct {
-	Synthetic
-	Loc loc.AddressableLocation
-}
 type SelectSend struct {
 	selectChnSynthetic
 	Val ssa.Value
@@ -168,22 +159,6 @@ type BuiltinCall struct {
 	Call    ssa.CallInstruction
 	builtin *ssa.Builtin
 }
-type MuLock struct {
-	Synthetic
-	Loc loc.Location
-}
-type MuUnlock struct {
-	Synthetic
-	Loc loc.Location
-}
-type RWMuRLock struct {
-	Synthetic
-	Loc loc.Location
-}
-type RWMuRUnlock struct {
-	Synthetic
-	Loc loc.Location
-}
 type Waiting struct {
 	Synthetic
 	Call ssa.CallInstruction
@@ -192,25 +167,6 @@ type Waking struct {
 	Synthetic
 	Call ssa.CallInstruction
 }
-type condLeafSynthetic struct {
-	Synthetic
-	Cnd loc.Location
-}
-type CondWaiting struct {
-	condLeafSynthetic
-}
-type CondWaking struct {
-	condLeafSynthetic
-}
-type CondWait struct {
-	condLeafSynthetic
-}
-type CondSignal struct {
-	condLeafSynthetic
-}
-type CondBroadcast struct {
-	condLeafSynthetic
-}
 type APIConcBuiltinCall struct {
 	Synthetic
 	Call ssa.CallInstruction
@@ -218,10 +174,6 @@ type APIConcBuiltinCall struct {
 
 func (n *chnSynthetic) Channel() ssa.Value {
 	return n.chn
-}
-
-func (n *condLeafSynthetic) Cond() ssa.Value {
-	return n.Predecessor().Cond()
 }
 
 // Universal implementation of synthetic node configuration.
@@ -239,8 +191,6 @@ type SynthConfig struct {
 	Insn ssa.Instruction
 	// Used for nodes related to channel values
 	Chn *ssa.MakeChan
-	// Used for synthetic send/recv/mutex nodes in abstract successor computation
-	Loc loc.Location
 	// Other locations which might be used
 	Call ssa.CallInstruction
 	// Arbitrary list of values.
@@ -279,7 +229,7 @@ type AnySynthetic interface {
 	Block() *ssa.BasicBlock
 	// Initialization synthetic node structures,
 	// e. g. successor/predecessor maps
-	init(config SynthConfig, id string)
+	Init(config SynthConfig, id string)
 }
 
 func (n *Synthetic) Id() string {
@@ -296,7 +246,7 @@ func CreateSynthetic(config SynthConfig) (n Node) {
 
 // Public wrapper around addSynthetic. Like `CreateSynthetic` but does not
 // generate a new node if a identical previous one exists.
-func AddSynthetic(config SynthConfig) Node {
+func (cfg *Cfg) AddSynthetic(config SynthConfig) Node {
 	node, _ := cfg.addSynthetic(config)
 	return node
 }
@@ -318,20 +268,6 @@ func createSynthetic(config SynthConfig, id string) Node {
 	case SynthTypes.TERMINATE_GORO:
 		n = new(TerminateGoro)
 		n.(*TerminateGoro).cause = config.TerminationCause
-	case SynthTypes.COMM_SEND:
-		n = new(CommSend)
-		if config.Loc == nil {
-			log.Fatalln("nil location when constructing CommSend")
-		}
-
-		n.(*CommSend).Loc = config.Loc.(loc.AddressableLocation)
-	case SynthTypes.COMM_RCV:
-		n = new(CommRcv)
-		if config.Loc == nil {
-			log.Fatalln("nil location when constructing CommRcv")
-		}
-
-		n.(*CommRcv).Loc = config.Loc.(loc.AddressableLocation)
 	case SynthTypes.FUNCTION_ENTRY:
 		n = new(FunctionEntry)
 	case SynthTypes.FUNCTION_EXIT:
@@ -384,39 +320,12 @@ func createSynthetic(config SynthConfig, id string) Node {
 		n = new(BuiltinCall)
 		n.(*BuiltinCall).Call = config.Call
 		n.(*BuiltinCall).builtin = config.Vals[0].(*ssa.Builtin)
-	case SynthTypes.LOCK:
-		n = new(MuLock)
-		n.(*MuLock).Loc = config.Loc
-	case SynthTypes.UNLOCK:
-		n = new(MuUnlock)
-		n.(*MuUnlock).Loc = config.Loc
-	case SynthTypes.RWMU_RLOCK:
-		n = new(RWMuRLock)
-		n.(*RWMuRLock).Loc = config.Loc
-	case SynthTypes.RWMU_RUNLOCK:
-		n = new(RWMuRUnlock)
-		n.(*RWMuRUnlock).Loc = config.Loc
 	case SynthTypes.WAITING:
 		n = new(Waiting)
 		n.(*Waiting).Call = config.Call
 	case SynthTypes.WAKING:
 		n = new(Waking)
 		n.(*Waking).Call = config.Call
-	case SynthTypes.COND_WAIT:
-		n = new(CondWait)
-		n.(*CondWait).Cnd = config.Loc
-	case SynthTypes.COND_WAITING:
-		n = new(CondWaiting)
-		n.(*CondWaiting).Cnd = config.Loc
-	case SynthTypes.COND_WAKING:
-		n = new(CondWaking)
-		n.(*CondWaking).Cnd = config.Loc
-	case SynthTypes.COND_SIGNAL:
-		n = new(CondSignal)
-		n.(*CondSignal).Cnd = config.Loc
-	case SynthTypes.COND_BROADCAST:
-		n = new(CondBroadcast)
-		n.(*CondBroadcast).Cnd = config.Loc
 	case SynthTypes.API_CONC_BUILTIN:
 		n = new(APIConcBuiltinCall)
 		n.(*APIConcBuiltinCall).Call = config.Call
@@ -424,7 +333,7 @@ func createSynthetic(config SynthConfig, id string) Node {
 		log.Fatal("Inexhaustive pattern match: ", config.Type)
 		os.Exit(1)
 	}
-	n.init(config, id)
+	n.Init(config, id)
 	return n.(Node)
 }
 
@@ -453,9 +362,9 @@ func syntheticId(config SynthConfig) string {
 	case SynthTypes.POST_CALL:
 		config.IdSuffixes = append([]string{"post-call"}, config.IdSuffixes...)
 	case SynthTypes.COMM_RCV:
-		config.IdSuffixes = append([]string{config.Loc.String() + "<-"}, config.IdSuffixes...)
+		//config.IdSuffixes = append([]string{config.Loc.String() + "<-"}, config.IdSuffixes...)
 	case SynthTypes.COMM_SEND:
-		config.IdSuffixes = append([]string{"<-" + config.Loc.String()}, config.IdSuffixes...)
+		//config.IdSuffixes = append([]string{"<-" + config.Loc.String()}, config.IdSuffixes...)
 	case SynthTypes.DEFER_CALL:
 		config.IdSuffixes = append([]string{"pre-defer"}, config.IdSuffixes...)
 	case SynthTypes.POST_DEFER_CALL:
@@ -475,27 +384,27 @@ func syntheticId(config SynthConfig) string {
 	case SynthTypes.PENDING_GO:
 		config.IdSuffixes = append([]string{"pending-go"}, config.IdSuffixes...)
 	case SynthTypes.LOCK:
-		config.IdSuffixes = append([]string{"mu-lock(" + config.Loc.String() + ")"}, config.IdSuffixes...)
+		//config.IdSuffixes = append([]string{"mu-lock(" + config.Loc.String() + ")"}, config.IdSuffixes...)
 	case SynthTypes.UNLOCK:
-		config.IdSuffixes = append([]string{"mu-unlock(" + config.Loc.String() + ")"}, config.IdSuffixes...)
+		//config.IdSuffixes = append([]string{"mu-unlock(" + config.Loc.String() + ")"}, config.IdSuffixes...)
 	case SynthTypes.RWMU_RLOCK:
-		config.IdSuffixes = append([]string{"rwmu-rlock(" + config.Loc.String() + ")"}, config.IdSuffixes...)
+		//config.IdSuffixes = append([]string{"rwmu-rlock(" + config.Loc.String() + ")"}, config.IdSuffixes...)
 	case SynthTypes.RWMU_RUNLOCK:
-		config.IdSuffixes = append([]string{"rwmu-runlock(" + config.Loc.String() + ")"}, config.IdSuffixes...)
+		//config.IdSuffixes = append([]string{"rwmu-runlock(" + config.Loc.String() + ")"}, config.IdSuffixes...)
 	case SynthTypes.WAITING:
 		config.IdSuffixes = append([]string{"waiting"}, config.IdSuffixes...)
 	case SynthTypes.WAKING:
 		config.IdSuffixes = append([]string{"waking"}, config.IdSuffixes...)
 	case SynthTypes.COND_WAIT:
-		config.IdSuffixes = append([]string{config.Loc.String() + ".Wait()"}, config.IdSuffixes...)
+		//config.IdSuffixes = append([]string{config.Loc.String() + ".Wait()"}, config.IdSuffixes...)
 	case SynthTypes.COND_WAITING:
-		config.IdSuffixes = append([]string{config.Loc.String() + ".Waiting()"}, config.IdSuffixes...)
+		//config.IdSuffixes = append([]string{config.Loc.String() + ".Waiting()"}, config.IdSuffixes...)
 	case SynthTypes.COND_WAKING:
-		config.IdSuffixes = append([]string{config.Loc.String() + ".Waking()"}, config.IdSuffixes...)
+		//config.IdSuffixes = append([]string{config.Loc.String() + ".Waking()"}, config.IdSuffixes...)
 	case SynthTypes.COND_SIGNAL:
-		config.IdSuffixes = append([]string{config.Loc.String() + ".Signal()"}, config.IdSuffixes...)
+		//config.IdSuffixes = append([]string{config.Loc.String() + ".Signal()"}, config.IdSuffixes...)
 	case SynthTypes.COND_BROADCAST:
-		config.IdSuffixes = append([]string{config.Loc.String() + ".Broadcast()"}, config.IdSuffixes...)
+		//config.IdSuffixes = append([]string{config.Loc.String() + ".Broadcast()"}, config.IdSuffixes...)
 	case SynthTypes.API_CONC_BUILTIN:
 		config.IdSuffixes = append([]string{"api-builtin"}, config.IdSuffixes...)
 	default:
@@ -553,7 +462,7 @@ func syntheticId(config SynthConfig) string {
 // Initialize all structures required for a synthetic node,
 // (maps for successors/predecessors/spawns), and set the
 // parent block and function.
-func (n *Synthetic) init(config SynthConfig, id string) {
+func (n *Synthetic) Init(config SynthConfig, id string) {
 	n.succ = make(map[Node]struct{})
 	n.pred = make(map[Node]struct{})
 	n.spawn = make(map[Node]struct{})
@@ -905,36 +814,6 @@ func (n *SelectRcv) CommaOk() bool {
 	return n.Ok != nil
 }
 
-func (n *CommSend) Payload() ssa.Value {
-	switch n := n.Predecessor().(type) {
-	case *SSANode:
-		i, ok := n.insn.(*ssa.Send)
-		if !ok {
-			panic(fmt.Sprintf("CommSend predecessor node is not a channel send? %v %T", n, n))
-		}
-		return i.X
-	case *SelectSend:
-		return n.Val
-	default:
-		panic(fmt.Sprintf("CommSend predecessor node is not a channel send? %v %T", n, n))
-	}
-}
-
-func (n *CommRcv) CommaOk() bool {
-	switch n := n.Predecessor().(type) {
-	case *SSANode:
-		i, ok := n.insn.(*ssa.UnOp)
-		if !ok || i.Op != token.ARROW {
-			panic(fmt.Sprintf("CommSend predecessor node is not a channel receive? %v %T", n, n))
-		}
-		return i.CommaOk
-	case *SelectRcv:
-		return n.Ok != nil
-	default:
-		panic(fmt.Sprintf("CommSend predecessor node is not a channel receive? %v %T", n, n))
-	}
-}
-
 func (Synthetic) Pos() token.Pos {
 	return token.NoPos
 }
@@ -954,19 +833,6 @@ func (n *Synthetic) CommTransitive() map[Node]struct{} {
 			for succ := range n.Successors() {
 				visit(succ)
 			}
-			// Return a termination node if the node is a function exit
-			// with no successors (helps with annotations on exit nodes)
-			if len(n.Successors()) == 0 {
-				_, ok := n.(*FunctionExit)
-				if ok {
-					term, _ := cfg.addSynthetic(SynthConfig{
-						Type:             SynthTypes.TERMINATE_GORO,
-						Function:         n.Function(),
-						TerminationCause: GoroTermination.EXIT_ROOT,
-					})
-					succs[term] = struct{}{}
-				}
-			}
 
 			if dfr := n.DeferLink(); len(n.Successors()) == 0 && !n.IsDeferred() && dfr != nil {
 				visit(dfr)
@@ -980,14 +846,6 @@ func (n *Synthetic) CommTransitive() map[Node]struct{} {
 	visit(n)
 
 	return succs
-}
-
-func (n *CommSend) Pos() token.Pos {
-	return n.Predecessor().Pos()
-}
-
-func (n *CommRcv) Pos() token.Pos {
-	return n.Predecessor().Pos()
 }
 
 func (n *PostCall) Pos() token.Pos {
@@ -1042,27 +900,6 @@ func (n *APIConcBuiltinCall) Pos() token.Pos {
 	return n.Call.Pos()
 }
 
-// Returns receiver of communication node.
-// If the predecessor is a select receive node, it returns the receiver value, ok value, if
-// present, and a boolean indicating the receiver has been split.
-// If the predecessor is a regular receive, it returns the receiver value, which
-// will be a tuple from which the result payload, and "ok" will be later
-// extracted.
-func (n *CommRcv) Receiver() (ssa.Value, ssa.Value, bool) {
-	switch n := n.Predecessor().(type) {
-	case *SSANode:
-		i, ok := n.insn.(*ssa.UnOp)
-		if !ok || i.Op != token.ARROW {
-			panic(fmt.Sprintf("CommSend predecessor node is not a channel receive? %v %T", n, n))
-		}
-		return i, nil, i.CommaOk
-	case *SelectRcv:
-		return n.Val, n.Ok, false
-	default:
-		panic(fmt.Sprintf("CommSend predecessor node is not a channel receive? %v %T", n, n))
-	}
-}
-
 func (n *BuiltinCall) String() string {
 	callCommon := n.Call.Common()
 	strs := make([]string, 0, len(callCommon.Args))
@@ -1112,14 +949,6 @@ func (n *SelectRcv) String() string {
 
 func (n *SelectSend) String() string {
 	return "[ case " + n.chn.Name() + " <- " + n.Val.String() + " ]"
-}
-
-func (n *CommSend) String() string {
-	return "[ concrete " + n.Loc.String() + " <- ]"
-}
-
-func (n *CommRcv) String() string {
-	return "[ concrete <-" + n.Loc.String() + " ]"
 }
 
 func (n *TerminateGoro) String() string {

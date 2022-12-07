@@ -4,6 +4,7 @@ import (
 	"go/token"
 	"log"
 
+	"github.com/cs-au-dk/goat/analysis/absint/leaf"
 	"github.com/cs-au-dk/goat/analysis/cfg"
 	"github.com/cs-au-dk/goat/analysis/defs"
 	L "github.com/cs-au-dk/goat/analysis/lattice"
@@ -27,20 +28,10 @@ func (C AnalysisCtxt) computeCommunicationLeaves(g defs.Goro, mem L.Memory, cl d
 
 	getCommSuccs := func(v ssa.Value, typ cfg.SYNTH_TYPE_ID) (res map[defs.CtrLoc]bool, newMem L.Memory) {
 		res = make(map[defs.CtrLoc]bool)
-		// TODO: Properly handle nil channel
-		ptSet := getPrimitives(v).FilterNil()
-		toSync := ptSet
-		// if !C.Empty() && false { // TODO: Disabled for the time being due to the bug mentioned at `if addSuccs { ...`
-		// 	toSync = ptSet.MonoMeet(C)
-		// }
-		// addSuccs is true if ptSet is not a subset of C
-		addSuccs := toSync.Size() < ptSet.Size()
+		toSync := getPrimitives(v).FilterNil()
 		for _, c := range toSync.Entries() {
 			// Create configuration information for concrete synchronization node
-			config := cfg.SynthConfig{
-				Type: typ,
-				Loc:  c,
-			}
+			config := cfg.SynthConfig{Type: typ}
 			switch n := cl.Node().(type) {
 			case *cfg.SSANode:
 				config.Insn = n.Instruction()
@@ -57,24 +48,10 @@ func (C AnalysisCtxt) computeCommunicationLeaves(g defs.Goro, mem L.Memory, cl d
 					config.Function = n.Channel().Parent()
 				}
 			}
-			commNode := cfg.CreateSynthetic(config)
+			commNode := leaf.CreateLeaf(config, c)
 			commNode.AddPredecessor(cl.Node())
 
 			res[cl.Derive(commNode)] = true
-		}
-		// Check whether any of the channels in the relevant points-to set are
-		// buffered
-		// (V): This might not be necessary anymore. The communication leaf
-		// already includes the channel, and must simply check the abstract memory
-		// to construct bufferred channel successors.
-		// addSuccs = addSuccs || hasBufferedChans(toSync, mem)
-
-		// Include "silent" transition if the pts-to set is not a subset of C
-		if addSuccs {
-			// TODO: We need to populate the ssa registers at receives with something here...
-			for succ := range cl.Successors() {
-				res[succ] = true
-			}
 		}
 		return res, mops.Memory()
 	}
@@ -84,8 +61,8 @@ func (C AnalysisCtxt) computeCommunicationLeaves(g defs.Goro, mem L.Memory, cl d
 		ptSet := getPrimitives(v).FilterNil()
 
 		for _, c := range ptSet.Entries() {
+			usedLoc := c
 			config := cfg.SynthConfig{
-				Loc:  c,
 				Insn: i,
 			}
 			if l, ok := c.(loc.AllocationSiteLocation); ok &&
@@ -103,14 +80,14 @@ func (C AnalysisCtxt) computeCommunicationLeaves(g defs.Goro, mem L.Memory, cl d
 					ptSet := mops.GetUnsafe(l).PointerValue()
 					C.CheckPointsTo(ptSet)
 					for _, c := range ptSet.NonNilEntries() {
-						config.Loc = c
+						usedLoc = c
 
 						if config.Type == 0 {
 							res[cl.Successor()] = true
 							continue
 						}
 
-						muNode := cfg.CreateSynthetic(config)
+						muNode := leaf.CreateLeaf(config, usedLoc)
 						muNode.AddPredecessor(cl.Node())
 
 						res[cl.Derive(muNode)] = true
@@ -136,7 +113,7 @@ func (C AnalysisCtxt) computeCommunicationLeaves(g defs.Goro, mem L.Memory, cl d
 				continue
 			}
 
-			muNode := cfg.CreateSynthetic(config)
+			muNode := leaf.CreateLeaf(config, usedLoc)
 			muNode.AddPredecessor(cl.Node())
 
 			res[cl.Derive(muNode)] = true
@@ -150,10 +127,7 @@ func (C AnalysisCtxt) computeCommunicationLeaves(g defs.Goro, mem L.Memory, cl d
 		ptSet := getPrimitives(i.Common().Args[0])
 
 		for _, c := range ptSet.NonNilEntries() {
-			config := cfg.SynthConfig{
-				Loc:  c,
-				Insn: i,
-			}
+			config := cfg.SynthConfig{Insn: i}
 
 			switch i.Common().Value.Name() {
 			case "Signal":
@@ -169,7 +143,7 @@ func (C AnalysisCtxt) computeCommunicationLeaves(g defs.Goro, mem L.Memory, cl d
 				continue
 			}
 
-			condOp := cfg.CreateSynthetic(config)
+			condOp := leaf.CreateLeaf(config, c)
 			condOp.AddPredecessor(cl.Node())
 			res[cl.Derive(condOp)] = true
 		}
@@ -210,11 +184,10 @@ func (C AnalysisCtxt) computeCommunicationLeaves(g defs.Goro, mem L.Memory, cl d
 		for _, c := range ptSet.NonNilEntries() {
 			config := cfg.SynthConfig{
 				Type: cfg.SynthTypes.COND_WAITING,
-				Loc:  c,
 				Insn: n.Instruction(),
 			}
 
-			waiting := cfg.CreateSynthetic(config)
+			waiting := leaf.CreateLeaf(config, c)
 			waiting.AddPredecessor(n)
 			res[cl.Derive(waiting)] = true
 		}
@@ -229,11 +202,10 @@ func (C AnalysisCtxt) computeCommunicationLeaves(g defs.Goro, mem L.Memory, cl d
 		for _, c := range ptSet.NonNilEntries() {
 			config := cfg.SynthConfig{
 				Type: cfg.SynthTypes.COND_WAKING,
-				Loc:  c,
 				Insn: n.Instruction(),
 			}
 
-			waking := cfg.CreateSynthetic(config)
+			waking := leaf.CreateLeaf(config, c)
 			waking.AddPredecessor(n)
 			res[cl.Derive(waking)] = true
 		}

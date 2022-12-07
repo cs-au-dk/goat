@@ -360,12 +360,6 @@ func CommunicationPrimitivesOf(node Node) (res []ssa.Value) {
 	return
 }
 
-var cfg *Cfg = &Cfg{}
-
-func CFG() *Cfg {
-	return cfg
-}
-
 func (cfg *Cfg) MaxCallees() (cs Node, maxCallees int) {
 	update := func(n Node) {
 		succs := len(n.Successors())

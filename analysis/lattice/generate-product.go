@@ -78,7 +78,7 @@ func (w WrappedProductElement) Update{{ $field.Accessor }}(value {{ $field.Typen
 	// Add a safety check function
 	templ = ttemplate.Must(ttemplate.New("").Parse(`
 func _checkWrappedProductElement(el WrappedProductElement) {
-	if el.product.prod.Len() != {{ len . }} {
+	if len(*el.product.prod) != {{ len . }} {
 		panic("Product length mismatch. Expected {{ len . }}.")
 	}
 

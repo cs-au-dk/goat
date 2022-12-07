@@ -4,13 +4,16 @@ import (
 	"fmt"
 
 	i "github.com/cs-au-dk/goat/utils/indenter"
-
-	"github.com/benbjohnson/immutable"
 )
 
 type Product struct {
 	element
-	prod elementList
+	// The arity of the products we use is small (the list of elements is
+	// short). In this case copying slices is cheaper than modifying elements
+	// in immutable lists that are made for fast updates in really long lists.
+	// (The reason pointer-to slice is used is to retain comparability of
+	// elements (used in various places, such as value.go)).
+	prod *[]Element
 }
 
 func (p Product) Product() Product {
@@ -18,28 +21,25 @@ func (p Product) Product() Product {
 }
 
 func newProduct(lat Lattice) Product {
-	e := Product{}
 	lat2 := lat.Product()
-	lst := immutable.NewListBuilder()
-
-	for _, lat := range lat2.product {
-		lst.Append(lat.Bot())
+	sl := make([]Element, len(lat2.product))
+	for i, lat := range lat2.product {
+		sl[i] = lat.Bot()
 	}
-	e.lattice = lat2
-	e.prod = elementList{lst.List()}
-	return e
+	return Product{element{lat2}, &sl}
 }
 
 func (elementFactory) Product(lat Lattice) func(members ...Element) Product {
 	switch lat := lat.(type) {
 	case *ProductLattice:
 		return func(members ...Element) Product {
-			el := lat.Bot().Product()
-
-			for i, x := range members {
-				el.prod = el.prod.set(i, x)
+			el := newProduct(lat)
+			for i, e2 := range members {
+				checkLatticeMatchThunked(lat.product[i], e2.Lattice(), func() string {
+					return fmt.Sprintf("(%s)(%d) := %s", el, i, e2)
+				})
+				(*el.prod)[i] = e2
 			}
-
 			return el
 		}
 	case *Dropped:
@@ -53,14 +53,14 @@ func (elementFactory) Product(lat Lattice) func(members ...Element) Product {
 
 func (e Product) String() string {
 	strs := []fmt.Stringer{}
-	e.prod.foreach(func(_ int, e Element) {
+	for _, e := range *e.prod {
 		strs = append(strs, e)
-	})
+	}
 	return i.Indenter().Start("(").NestSep(",", strs...).End(")")
 }
 
 func (p Product) Height() (h int) {
-	p.prod.foreach(func(index int, e Element) {
+	for index, e := range *p.prod {
 		elat := p.Lattice().Product().Get(index)
 		switch e := e.(type) {
 		case *LiftedBot:
@@ -68,9 +68,18 @@ func (p Product) Height() (h int) {
 		default:
 			h += elat.Preheight() + e.Height()
 		}
-	})
+	}
 
 	return
+}
+
+func (p Product) forall(f func(int, Element) bool) bool {
+	for i, e := range *p.prod {
+		if !f(i, e) {
+			return false
+		}
+	}
+	return true
 }
 
 func (e1 Product) Eq(e2 Element) bool {
@@ -84,7 +93,7 @@ func (p Product) eq(oe Element) bool {
 		return false
 	}
 
-	return p.prod.forall(func(i int, e Element) bool {
+	return p.forall(func(i int, e Element) bool {
 		return e.eq(o.Get(i))
 	})
 }
@@ -97,7 +106,7 @@ func (e1 Product) Geq(e2 Element) bool {
 func (e1 Product) geq(e2 Element) bool {
 	switch e2 := e2.(type) {
 	case Product:
-		return e1.prod.forall(func(i int, e Element) bool {
+		return e1.forall(func(i int, e Element) bool {
 			return e.geq(e2.Get(i))
 		})
 	case *LiftedBot:
@@ -117,7 +126,7 @@ func (e1 Product) Leq(e2 Element) bool {
 func (e1 Product) leq(e2 Element) bool {
 	switch e2 := e2.(type) {
 	case Product:
-		return e1.prod.forall(func(i int, e Element) bool {
+		return e1.forall(func(i int, e Element) bool {
 			return e.leq(e2.Get(i))
 		})
 	case *LiftedBot:
@@ -140,11 +149,12 @@ func (e1 Product) MonoJoin(e2 Product) Product {
 		return e1
 	}
 
-	lst := immutable.NewListBuilder()
-	e2.prod.foreach(func(i int, e Element) {
-		lst.Append(e.join(e1.Get(i)))
-	})
-	e1.prod = elementList{lst.List()}
+	sl := make([]Element, len(*e1.prod))
+	for i, e := range *e1.prod {
+		sl[i] = e.join(e2.Get(i))
+	}
+
+	e1.prod = &sl
 	return e1
 }
 
@@ -167,13 +177,18 @@ func (e1 Product) Meet(e2 Element) Element {
 }
 
 func (e1 Product) MonoMeet(e2 Product) Product {
-	e3 := newProduct(e1.lattice)
-	lst := immutable.NewListBuilder()
-	e2.prod.foreach(func(i int, e Element) {
-		lst.Append(e.meet(e1.Get(i)))
-	})
-	e3.prod = elementList{lst.List()}
-	return e3
+	// Improves performance a lot.
+	if e1.prod == e2.prod {
+		return e1
+	}
+
+	sl := make([]Element, len(*e1.prod))
+	for i, e := range *e1.prod {
+		sl[i] = e.meet(e2.Get(i))
+	}
+
+	e1.prod = &sl
+	return e1
 }
 
 func (e1 Product) meet(e2 Element) Element {
@@ -202,10 +217,13 @@ func (e1 Product) Update(i int, e2 Element) Product {
 }
 
 func (e1 Product) update(i int, e2 Element) Product {
-	e1.prod = e1.prod.set(i, e2)
+	sl := make([]Element, len(*e1.prod))
+	copy(sl, *e1.prod)
+	sl[i] = e2
+	e1.prod = &sl
 	return e1
 }
 
 func (e Product) Get(i int) Element {
-	return e.prod.get(i)
+	return (*e.prod)[i]
 }

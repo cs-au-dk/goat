@@ -18,7 +18,7 @@ func loadProgram(t *testing.T, content string) AnalysisCtxt {
 	loadRes := testutil.LoadPackageFromSource(t, "testpackage", content)
 
 	if opts.Visualize() {
-		cfg.Visualize(loadRes.Prog, loadRes.Pointer)
+		loadRes.Cfg.Visualize(loadRes.Pointer)
 	}
 
 	ctxt := PrepareAI().FunctionByName("tmain", false)(loadRes)
@@ -248,6 +248,24 @@ func TestAbstractInterpretation(t *testing.T) {
 
 		if !found {
 			t.Error("Did not find a successor where", g, "has panicked")
+		}
+	}
+
+	// Checks that the result of silent transitions only contains configurations where g is panicked
+	checkMustPanic := func(t *testing.T, ctxt AnalysisCtxt) {
+		injectUBool(&ctxt)
+		g := ctxt.InitConf.Target
+		succs := ctxt.InitConf.GetSilentSuccessors(ctxt, g, ctxt.InitState)
+		if len(succs) == 0 {
+			t.Fatalf("0 successors? %v", succs)
+		}
+
+		for _, succ := range succs {
+			node := succ.Configuration().Threads().GetUnsafe(g)
+			if !node.Panicked() {
+				t.Error("Found a successor where", g, "has not panicked")
+				break
+			}
 		}
 	}
 
@@ -1134,6 +1152,18 @@ func TestAbstractInterpretation(t *testing.T) {
 			paramEqualsReturnValue,
 		},
 		{
+			"call_generic_function",
+			`func f[E any](x E) E {
+				return x
+			}
+
+			func tmain() int {
+				f("hi")
+				return f(10)
+			}`,
+			rvalEq(L.Elements().AbstractBasic(int64(10))),
+		},
+		{
 			"slice_append",
 			`func tmain() chan int {
 				ch := make(chan int)
@@ -1331,6 +1361,54 @@ func TestAbstractInterpretation(t *testing.T) {
 				println(ok)
 			}`,
 			checkNoPanic,
+		},
+		{
+			"interface_typeassert_to_itf_commaok_succeeds",
+			`type T interface { get() int }
+			type impl int
+			func (x impl) get() int { return int(x) }
+
+			func make() any { return impl(10) }
+
+			func tmain() (int, bool) {
+				itf := make()
+				i, ok := itf.(T)
+				return i.get(), ok
+			}`,
+			rvalEq(Elements().AbstractStructV(
+				Elements().AbstractBasic(int64(10)),
+				Elements().AbstractBasic(true),
+			)),
+		},
+		{
+			"interface_typeassert_to_itf_commaok_must_fail",
+			`type T interface { fget() int }
+			type impl int
+			func (x impl) get() int { return int(x) }
+
+			func make() any { return impl(10) }
+
+			func tmain() bool {
+				itf := make()
+				_, ok := itf.(T)
+				return ok
+			}`,
+			rvalEq(Elements().AbstractBasic(false)),
+		},
+		{
+			"interface_typeassert_to_itf_must_fail",
+			`type T interface { fget() int }
+			type impl int
+			func (x impl) get() int { return int(x) }
+
+			func make() any { return impl(10) }
+
+			func tmain() {
+				itf := make()
+				i := itf.(T)
+				println(i)
+			}`,
+			checkMustPanic,
 		},
 		{
 			"[disabled] panicked_return",
@@ -1786,6 +1864,27 @@ func TestAbstractInterpretation(t *testing.T) {
 					}
 				}
 			}),
+		},
+		{
+			"unop_int_sub",
+			`var x int
+			func tmain() int {
+				x = 1
+				return -x
+			}`,
+			rvalEq(Elements().AbstractBasic(int64(-1))),
+		},
+		{
+			"intdiv_by_zero",
+			`var x int
+			func tmain() int { return 2 / x }`,
+			checkMustPanic,
+		},
+		{
+			"intmod_by_zero",
+			`var x int
+			func tmain() int { return 2 % x }`,
+			checkMustPanic,
 		},
 		{
 			"[disabled] andersen-unsoundness-crash",
