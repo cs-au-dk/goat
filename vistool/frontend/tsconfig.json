@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "sourceMap": true,
+    "target": "es2016",
+    "module": "esnext",
+    "moduleResolution": "node",
+
+    "jsx": "react",
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+
+
+    // "outDir": "./build",
+    "strict": true,
+
+
+    "skipLibCheck": true,
+    "typeRoots": ["./node_modules/@types/", "./src/@types"]
+  }
+}
