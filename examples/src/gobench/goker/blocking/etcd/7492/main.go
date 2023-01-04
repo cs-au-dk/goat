@@ -12,6 +12,9 @@ import (
 	"time"
 )
 
+//@ goro(g1, true, _root, go1)
+//@ goro(g2, true, _root, go2)
+
 type TokenProvider interface {
 	assign()
 	enable()
@@ -40,7 +43,7 @@ func NewSimpleTokenTTLKeeper(deletefunc func(string)) *simpleTokenTTLKeeper {
 		stopCh:           make(chan chan struct{}),
 		deleteTokenFunc:  deletefunc,
 	}
-	go stk.run() // G1
+	go stk.run() // G1 //@ go(go1)
 	return stk
 }
 
@@ -65,7 +68,7 @@ func (tm *simpleTokenTTLKeeper) run() {
 }
 
 func (tm *simpleTokenTTLKeeper) addSimpleToken() {
-	tm.addSimpleTokenCh <- struct{}{}
+	tm.addSimpleTokenCh <- struct{}{} //@ blocks(g1), fn
 }
 
 func (tm *simpleTokenTTLKeeper) stop() {
@@ -105,7 +108,7 @@ func (t *tokenSimple) disable() {
 		t.simpleTokenKeeper.stop()
 		t.simpleTokenKeeper = nil
 	}
-	t.simpleTokensMu.Lock() //@ blocks, fn
+	t.simpleTokensMu.Lock() //@ blocks(g2), fn
 	t.simpleTokensMu.Unlock()
 }
 
@@ -125,7 +128,7 @@ func setupAuthStore() (store *authStore, teardownfunc func()) {
 }
 
 ///
-///	G1										G2
+///	G2										G1
 ///											stk.run()
 ///	ts.assignSimpleTokenToUser()
 ///	t.simpleTokensMu.Lock()
@@ -148,10 +151,11 @@ func main() {
 	var wg sync.WaitGroup
 	wg.Add(3)
 	for i := 0; i < 3; i++ {
-		go func() { // G2
+		go func() { // G2 //@ go(go2)
 			defer wg.Done()
 			as.Authenticate()
 		}()
 	}
-	wg.Wait()
+	// WaitGroup not modelled
+	wg.Wait() // @ blocks
 }

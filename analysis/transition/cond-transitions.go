@@ -10,30 +10,32 @@ import (
 	"github.com/cs-au-dk/goat/utils"
 )
 
-type Wait struct {
+// CondWait is a transition resuting from initiating a (*sync.Cond).Wait operation.
+type CondWait struct {
 	transitionSingle
 	Cond loc.Location
 }
 
-func (t Wait) PrettyPrint() {
+func (t CondWait) PrettyPrint() {
 	fmt.Println(t.progressed, "started waiting on Cond", t.Cond)
 }
 
-func (t Wait) String() string {
-	return t.progressed.String() + "-[ Wait(" + t.Cond.String() + ") ]"
+func (t CondWait) String() string {
+	return t.progressed.String() + "-[ CWait(" + t.Cond.String() + ") ]"
 }
 
-func (t Wait) Hash() uint32 {
+func (t CondWait) Hash() uint32 {
 	return utils.HashCombine(
 		t.progressed.Hash(),
 		t.Cond.Hash(),
 	)
 }
 
-func NewWait(progressed defs.Goro, cond loc.Location) Wait {
-	return Wait{transitionSingle{progressed}, cond}
+func NewCondWait(progressed defs.Goro, cond loc.Location) CondWait {
+	return CondWait{transitionSingle{progressed}, cond}
 }
 
+// Wake is a transition resuting from finishing a (*sync.Cond).Wait operation.
 type Wake struct {
 	transitionSingle
 	Cond loc.Location
@@ -58,6 +60,7 @@ func NewWake(progressed defs.Goro, cond loc.Location) Wake {
 	return Wake{transitionSingle{progressed}, cond}
 }
 
+// Signal is a transition resuting from a (*sync.Cond).Signal operation.
 type Signal struct {
 	Progressed1 defs.Goro
 	Progressed2 defs.Goro
@@ -95,6 +98,7 @@ func (t Signal) Hash() uint32 {
 	)
 }
 
+// Broadcast is a transition resuting from a (*sync.Cond).Broadcast operation.
 type Broadcast struct {
 	Broadcaster  defs.Goro
 	Broadcastees map[defs.Goro]struct{}

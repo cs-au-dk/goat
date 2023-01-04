@@ -16,15 +16,15 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
+// funIO wraps the entry and exit nodes of a function.
 type funIO struct {
 	in  Node
 	out Node
 }
 
-// Compute an analysis friendly CFG for the given program SSA IR,
-// rewiring control flow for select statements.
-// Also takes into account control-flow information, dynamic dispatch,
-// as well as calls to defer. Requires points-to information.
+// GetCFG computes an analysis friendly CFG for the given program SSA IR, by rewiring control flow
+// for select statements, and by taking into account control-flow information, dynamic dispatch and
+// potential defer stacks. It requires a set of main packages as entry points, and points-to information.
 func GetCFG(prog *ssa.Program, mains []*ssa.Package, results *pointer.Result) *Cfg {
 	cfg := new(Cfg)
 	cfg.init()
@@ -1078,6 +1078,7 @@ func (g *Cfg) GetAllChans() (res map[ssa.Instruction]struct{}) {
 	return
 }
 
+// GetAllGos returns all `go` SSA instructions.
 func (g *Cfg) GetAllGos() (res map[ssa.Instruction]struct{}) {
 	res = make(map[ssa.Instruction]struct{})
 	visited := make(map[Node]struct{})

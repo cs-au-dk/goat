@@ -1,7 +1,6 @@
 package absint
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -34,12 +33,12 @@ func TestStaticAnalysisTopPointers(t *testing.T) {
 		tname := strings.SplitN(test, "/", 2)[1]
 
 		t.Run(tname, func(t *testing.T) {
-			fmt.Println("Starting:", test, "at", time.Now())
+			t.Log("Starting:", test, "at", time.Now())
 			runAllFunctionTests(t,
 				tu.LoadExamplePackage(t, "../..", test),
 				StaticAnalysisAndBlockingTests,
 			)
-			fmt.Println("Done: ", test, "at", time.Now())
+			t.Log("Done: ", test, "at", time.Now())
 		})
 	}
 }

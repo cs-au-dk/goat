@@ -5,8 +5,10 @@ import (
 	"github.com/cs-au-dk/goat/utils"
 )
 
-//go:generate go run generate-map.go AnalysisIntraprocess defs.CtrLoc AnalysisState
+//go:generate go run generate-map.go analysis-intraprocess
 
+// analysisIntraprocessLattice is a singleton instantiation
+// of the intra-processual analysis result lattice.
 var analysisIntraprocessLattice = &AnalysisIntraprocessLattice{mapLatticeBase{rng: analysisStateLattice}}
 
 func (latticeFactory) AnalysisIntraprocess() *AnalysisIntraprocessLattice {
@@ -25,6 +27,7 @@ func (a *AnalysisIntraprocessLattice) String() string {
 	return colorize.Lattice("ControlLoc") + " → " + a.rng.String()
 }
 
+// AnalysisIntraprocess bottom element.
 func (elementFactory) AnalysisIntraprocess() AnalysisIntraprocess {
 	return analysisIntraprocessLattice.Bot().AnalysisIntraprocess()
 }

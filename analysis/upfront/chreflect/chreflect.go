@@ -3,15 +3,16 @@ package chreflect
 import (
 	"go/types"
 
+	u "github.com/cs-au-dk/goat/analysis/upfront"
 	"github.com/cs-au-dk/goat/utils"
 
-	"golang.org/x/tools/go/pointer"
 	"golang.org/x/tools/go/ssa"
 )
 
-// Computes the set of channels that flow directly into the reflect.ValueOf function.
+// GetReflectedChannels computes the set of channels that flow directly into the reflect.ValueOf function.
 // Does not consider channels that flow indirectly, such as through struct fields.
-func GetReflectedChannels(prog *ssa.Program, pt *pointer.Result) utils.SSAValueSet {
+func GetReflectedChannels(prog *ssa.Program, pt *u.PointerResult) utils.SSAValueSet {
+	// Create a fresh set of SSA values.
 	res := utils.MakeSSASet()
 
 	if pkg := prog.ImportedPackage("reflect"); pkg != nil {

@@ -29,14 +29,16 @@ func (pm *Manager) init() {
 		go func(p *plugin) {
 			defer group.Done()
 		}(p)
-		group.Wait() // Block here
+		// We can't detect this due to the imprecise model of slice length
+		group.Wait() // Block here //@ blocks(g1), fn
 	}
 }
+//@ goro(g1, true, _root, go1)
 func main() {
 	p1 := &plugin{}
 	p2 := &plugin{}
 	pm := &Manager{
 		plugins: []*plugin{p1, p2},
 	}
-	go pm.init()
+	go pm.init() //@ go(go1)
 }

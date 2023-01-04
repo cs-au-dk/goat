@@ -97,7 +97,7 @@ func BlockAnalysisTest(
 				explanation := ""
 				if ssaNode, ok := cl.Node().(*cfg.SSANode); ok {
 					for _, oper := range ssaNode.Instruction().Operands(nil) {
-						val := evaluateSSA(g, mem, *oper)
+						val := EvaluateSSA(g, mem, *oper)
 						explanation = fmt.Sprintf("%s\n%s = %v\n", explanation, (*oper).Name(), val)
 
 						if val.IsPointer() {
@@ -123,6 +123,16 @@ func BlockAnalysisTest(
 			}); !found {
 				t.Error("The analysis result does not contain data-flow for a superlocation that matches", ann)
 			}
+		case tu.AnnNoDataflow:
+			// A nodataflow annotation states that there must be no superlocation where
+			// a control location with the "nodataflow" annotation exists. If a specific goroutine
+			// is focused, that goroutine must not be bound to the "nodataflow" annotation in
+			// any superlocation in the graph.
+			S.ForEach(func(ac *AbsConfiguration) {
+				if _, _, found := ac.Find(findClInSl(ann)); found {
+					t.Error("The analysis result contain unexpected data-flow for a superlocation that matches", ann)
+				}
+			})
 		}
 	})
 
@@ -716,8 +726,69 @@ func TestBlockingAnalysis(t *testing.T) {
 				panic("Oh no")
 			}`,
 			BlockAnalysisTest,
-		},
-		{
+		}, {
+			"chan-len-condition-blocks",
+			`func main() {
+					ch := make(chan int)
+					if len(ch) == 0 {
+						ch <- 1 //@ blocks
+					}
+				}`,
+			BlockAnalysisTest,
+		}, {
+			"chan-len-condition-no-dataflow",
+			`func main() {
+					ch := make(chan int)
+					if len(ch) != 0 {
+						ch <- 1 //@ nodataflow
+					}
+				}`,
+			BlockAnalysisTest,
+		}, {
+			"chan-len-condition-no-dataflow-1",
+			`func main() {
+					ch := make(chan int, 1)
+					ch <- 1
+					if len(ch) == 0 {
+						ch <- 1 //@ nodataflow
+					}
+				}`,
+			BlockAnalysisTest,
+		}, {
+			"chan-len-condition-maybe-dataflow",
+			`func ubool() bool
+
+				func main() {
+					ch := make(chan int, 1)
+					if ubool() {
+						ch <- 1 //@ releases
+					}
+
+					if len(ch) == 0 {
+						ch <- 1 //@ releases
+					} else {
+						ch <- 1 //@ releases
+					}
+
+					ch <- 1 //@ blocks
+				}`,
+			BlockAnalysisTest,
+		}, {
+			"chan-len-condition-mixed-dataflow",
+			`func ubool() bool
+
+			func main() {
+				ch := make(chan int, 1)
+
+				ch <- 1
+				if len(ch) != 0 {
+					ch <- 1 //@ blocks
+				} else {
+					<-ch //@ nodataflow
+				}
+			}`,
+			BlockAnalysisTest,
+		}, {
 			// See TODO in absint of FunctionExit
 			"[disabled] comm-separated-calls",
 			at(ann.Goro(main, true, root), ann.Goro(g(0), true, root, g(0))) + `

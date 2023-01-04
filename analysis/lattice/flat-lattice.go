@@ -6,25 +6,31 @@ import (
 	i "github.com/cs-au-dk/goat/utils/indenter"
 )
 
+// FlatLattice is a baseline for extending flat lattices, exposing
+// their ⊥ and ⊤ values.
 type FlatLattice struct {
 	top FlatTop
 	bot FlatBot
 }
 
+// init initialized the ⊥ and ⊤ values for a given lattice.
 func (l *FlatLattice) init(outer Lattice) {
 	inner := flatElementBase{element{outer}}
 	l.top = FlatTop{inner}
 	l.bot = FlatBot{inner}
 }
 
+// Top yields the corresponding ⊤ member.
 func (l *FlatLattice) Top() Element {
 	return l.top
 }
 
+// Bot yields the corresponding ⊥ member.
 func (l *FlatLattice) Bot() Element {
 	return l.bot
 }
 
+// ConstantPropagationLattice is a heterogeneously valued lattice for any type of constant.
 type ConstantPropagationLattice struct {
 	lattice
 	FlatLattice
@@ -57,16 +63,18 @@ func (ConstantPropagationLattice) String() string {
 	return colorize.Lattice("Constant")
 }
 
+// FlatFiniteLattice is a flat lattice over a finite domain of values.
 type FlatFiniteLattice struct {
 	lattice
 	FlatLattice
-	dom map[interface{}]Element
+	dom map[any]Element
 }
 
-func (latticeFactory) Flat(dom ...interface{}) *FlatFiniteLattice {
+// Flat generates a flat lattice with the given non-⊥/⊤ elements.
+func (latticeFactory) Flat(dom ...any) *FlatFiniteLattice {
 	lat := new(FlatFiniteLattice)
 	lat.init(lat)
-	lat.dom = make(map[interface{}]Element)
+	lat.dom = make(map[any]Element)
 	for _, el := range dom {
 		lat.dom[el] = flatElement{
 			element{lat},
@@ -76,6 +84,7 @@ func (latticeFactory) Flat(dom ...interface{}) *FlatFiniteLattice {
 	return lat
 }
 
+// Flat
 func (l *FlatFiniteLattice) FlatFinite() *FlatFiniteLattice {
 	return l
 }
@@ -130,9 +139,7 @@ func (latticeFactory) FlatInt() *FlatIntLattice {
 }
 
 func (l *FlatIntLattice) String() string {
-	return colorize.Lattice("⊥") +
-		" < " + colorize.Lattice("ℤ") + " < " +
-		colorize.Lattice("T")
+	return colorize.Lattice("⊢ℤ⊣")
 }
 
 func (l1 *FlatIntLattice) Eq(l2 Lattice) bool {

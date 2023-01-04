@@ -7,6 +7,7 @@ import (
 
 	"github.com/cs-au-dk/goat/analysis/absint"
 	"github.com/cs-au-dk/goat/analysis/defs"
+	u "github.com/cs-au-dk/goat/analysis/upfront"
 	"github.com/cs-au-dk/goat/analysis/upfront/loopinline"
 	"github.com/cs-au-dk/goat/pkgutil"
 	"github.com/cs-au-dk/goat/testutil"
@@ -37,7 +38,7 @@ func TestLoopInlineBenchmarks(t *testing.T) {
 				}
 			}
 
-			if err := loopinline.InlineLoops(pkgs); err != nil {
+			if err := u.ASTTranform(pkgs, loopinline.Transform); err != nil {
 				prt()
 				t.Fatal("Inlining failed", err)
 			}
@@ -91,7 +92,7 @@ func TestLoopInlineAbsintEffect(t *testing.T) {
 
 	for _, doInline := range []bool{false, true} {
 		if doInline {
-			err = loopinline.InlineLoops(pkgs)
+			err = u.ASTTranform(pkgs, loopinline.Transform)
 			if err != nil {
 				t.Fatal("Failed to perform loop inlining?", err)
 			}

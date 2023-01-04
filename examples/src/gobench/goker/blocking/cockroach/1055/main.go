@@ -44,12 +44,14 @@ func (s *Stopper) Stop() {
 	atomic.StoreInt32(&s.draining, 1)
 	s.drain.Wait()
 	close(s.stopper)
-	s.stop.Wait()
+	// Without loop-inlining the stopper object becomes multi-allocated,
+	// so in that case we cannot detect the bug.
+	s.stop.Wait() //@ blocks(g2), fn
 }
 
 func (s *Stopper) StartTask() bool {
 	if atomic.LoadInt32(&s.draining) == 0 {
-		s.mu.Lock()
+		s.mu.Lock() //@ blocks(g1), fn
 		defer s.mu.Unlock()
 		s.drain.Add(1)
 		return true
@@ -63,6 +65,7 @@ func NewStopper() *Stopper {
 	}
 }
 
+//@ goro(main, true, _root), goro(g1, true, _root, go1), goro(g2, true, _root, go2)
 func main() {
 	var stoppers []*Stopper
 	for i := 0; i < 3; i++ {
@@ -72,7 +75,7 @@ func main() {
 	for i := range stoppers {
 		s := stoppers[i]
 		s.AddWorker()
-		go func() {
+		go func() { //@ go(go1)
 			s.StartTask()
 			<-s.ShouldStop()
 			s.SetStopped()
@@ -80,7 +83,7 @@ func main() {
 	}
 
 	done := make(chan struct{})
-	go func() {
+	go func() { //@ go(go2)
 		for _, s := range stoppers {
 			s.Quiesce()
 		}

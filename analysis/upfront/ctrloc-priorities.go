@@ -6,12 +6,13 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
+// CtrLocPriorities assigns functions to priorities and blocks within functions to priorities.
 type CtrLocPriorities struct {
 	FunPriorities   map[*ssa.Function]int
 	BlockPriorities map[*ssa.Function][]int
 }
 
-// Uses the SCC decomposition of the callgraph to assign priorities to ssa.Functions.
+// GetCtrLocPriorities uses the SCC decomposition of the callgraph to assign priorities to ssa.Functions.
 // Functions are assigned priorities in depth-first order. We prioritize "deeper" functions before others.
 // We cannot retrieve allFuns ourselves because importing cfg causes an import cycle.
 func GetCtrLocPriorities(allFuns map[*ssa.Function]struct{}, scc graph.SCCDecomposition[*ssa.Function]) CtrLocPriorities {

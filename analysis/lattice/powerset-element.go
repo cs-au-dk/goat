@@ -5,12 +5,14 @@ import (
 	"strings"
 )
 
+// Set represents a member of the powerset lattice.
 type Set struct {
 	element
 
 	set set
 }
 
+// newSet creates a fresh member of the given powerset lattice.
 func newSet(lat Lattice) Set {
 	lat2 := lat.Powerset()
 	e := Set{
@@ -20,6 +22,7 @@ func newSet(lat Lattice) Set {
 	return e
 }
 
+// Powerset creates a factory of elements for a given powerset lattice.
 func (elementFactory) Powerset(lat Lattice) func(set set) Set {
 	switch lat := lat.(type) {
 	case *Powerset:
@@ -157,7 +160,8 @@ func (e Set) Contains(x interface{}) bool {
 	return contained && ok
 }
 
-func (e Set) Add(x interface{}) Set {
+// Add computes
+func (e Set) Add(x any) Set {
 	powLat := e.Lattice().Powerset()
 	if !powLat.Contains(x) {
 		panic(fmt.Sprintf("%s is not part of the domain of powerset lattice:\n%s", x, powLat))
@@ -171,7 +175,8 @@ func (e Set) Add(x interface{}) Set {
 	return e2
 }
 
-func (e Set) Remove(x interface{}) Set {
+// Remove computes a derived set where the given element has been removed.
+func (e Set) Remove(x any) Set {
 	powLat := e.Lattice().Powerset()
 	if !powLat.Contains(x) {
 		panic(fmt.Sprintf("%s is not part of the domain of powerset lattice:\n%s", x, powLat))
@@ -185,18 +190,22 @@ func (e Set) Remove(x interface{}) Set {
 	return e
 }
 
+// All retrieves set members as a map.
 func (e Set) All() set {
 	return e.set
 }
 
+// Set can safely convert to a set.
 func (e Set) Set() Set {
 	return e
 }
 
+// Height is equivalent to the size of the member of a powerset lattice.
 func (e Set) Height() int {
 	return e.Size()
 }
 
+// MonoJoin is a monomorphic variant of m ⊔ o for members of the powerset lattice.
 func (e1 Set) MonoJoin(e2 Set) Set {
 	e3 := newSet(e1.lattice)
 	for x, contained := range e1.set {
@@ -212,6 +221,7 @@ func (e1 Set) MonoJoin(e2 Set) Set {
 	return e3
 }
 
+// MonoMeet is a monomorphic variant of m ⊓ o for members of the powerset lattice.
 func (e1 Set) MonoMeet(e2 Set) Set {
 	e3 := newSet(e1.lattice)
 	for x, in1 := range e1.set {
@@ -222,6 +232,7 @@ func (e1 Set) MonoMeet(e2 Set) Set {
 	return e3
 }
 
+// Size computes the number of elements in the set.
 func (e1 Set) Size() (size int) {
 	for _, contained := range e1.set {
 		if contained {

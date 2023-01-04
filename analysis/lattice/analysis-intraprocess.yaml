@@ -1,0 +1,15 @@
+# Intra-processual analysis result description
+
+name: AnalysisIntraprocess
+informal-lattice: lattice of intra-processual analysis results
+description: |
+  is a member of the intra-processual analysis results, binding
+  control locations to abstract states.
+description-lattice: |
+  is the lattice of intra-processual analysis results, encompassing all possible bindings
+  from control locations to abstract states.
+informal: intra-processual analysis result
+key: defs.CtrLoc
+informal-key: control location
+value: AnalysisState
+informal-value: abstract state

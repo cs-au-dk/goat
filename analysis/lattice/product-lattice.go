@@ -6,6 +6,7 @@ import (
 	i "github.com/cs-au-dk/goat/utils/indenter"
 )
 
+// ProductLattice encodes all product lattices.
 type ProductLattice struct {
 	lattice
 	top *Product
@@ -14,6 +15,7 @@ type ProductLattice struct {
 	product []Lattice
 }
 
+// Product produces a product lattice from the given list of lattices.
 func (latticeFactory) Product(lats ...Lattice) *ProductLattice {
 	p := new(ProductLattice)
 	p.product = lats
@@ -21,18 +23,22 @@ func (latticeFactory) Product(lats ...Lattice) *ProductLattice {
 	return p
 }
 
+// Lattices retrieves in-order all the underlying lattice members of a product.
 func (p *ProductLattice) Lattices() []Lattice {
 	return p.product
 }
 
+// Product can safely convert to a product lattice.
 func (p *ProductLattice) Product() *ProductLattice {
 	return p
 }
 
+// Size returns the cardinality in number of components of a product.
 func (p *ProductLattice) Size() int {
 	return len(p.product)
 }
 
+// Eq checks for equality with another lattice.
 func (l1 *ProductLattice) Eq(l2 Lattice) bool {
 	// First try to get away with referential equality
 	if l1 == l2 {
@@ -58,6 +64,8 @@ func (l1 *ProductLattice) Eq(l2 Lattice) bool {
 	}
 }
 
+// Top returns the ⊤ element of a product by computing the corresponding
+// ⊤ element for each component.
 func (p *ProductLattice) Top() Element {
 	if p.top == nil {
 		p.top = new(Product)
@@ -69,6 +77,8 @@ func (p *ProductLattice) Top() Element {
 	return *p.top
 }
 
+// Bot returns the ⊥ element of a product by computing the corresponding
+// ⊥ element for each component.
 func (p *ProductLattice) Bot() Element {
 	if p.bot == nil {
 		p.bot = new(Product)
@@ -95,10 +105,13 @@ func (p *ProductLattice) String() string {
 
 lazy updates
 */
+
+// Extend statefully adds more components to a product lattice.
 func (p *ProductLattice) Extend(l Lattice) {
 	p.product = append(p.product, l)
 }
 
+// Get retrieves the `i`-th sub-lattice of the product lattice.
 func (p *ProductLattice) Get(i int) Lattice {
 	return p.product[i]
 }

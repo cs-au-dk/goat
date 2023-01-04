@@ -3,6 +3,7 @@ package cfg
 import (
 	"fmt"
 	"go/token"
+	"go/types"
 	"log"
 	"os"
 	"strconv"
@@ -13,11 +14,13 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
+// SYNTH_TYPE_ID is the type of synthetic type identifiers.
 type SYNTH_TYPE_ID = int
 
-// Collection of IDs for synthetic node types.
+// SynthTypes is a collection of IDs for synthetic node types.
 // Wrapped in a struct to avoid excessively polluting the namespace.
 var SynthTypes = struct {
+	// Structurally
 	BLOCK_ENTRY       SYNTH_TYPE_ID
 	BLOCK_EXIT        SYNTH_TYPE_ID
 	BLOCK_ENTRY_DEFER SYNTH_TYPE_ID
@@ -48,6 +51,8 @@ var SynthTypes = struct {
 	COND_WAKING       SYNTH_TYPE_ID
 	COND_SIGNAL       SYNTH_TYPE_ID
 	COND_BROADCAST    SYNTH_TYPE_ID
+	WAITGROUP_ADD     SYNTH_TYPE_ID
+	WAITGROUP_WAIT    SYNTH_TYPE_ID
 	API_CONC_BUILTIN  SYNTH_TYPE_ID
 }{
 	BLOCK_ENTRY:       0,
@@ -80,32 +85,54 @@ var SynthTypes = struct {
 	COND_WAKING:       29,
 	COND_SIGNAL:       30,
 	COND_BROADCAST:    31,
-	API_CONC_BUILTIN:  32,
+	WAITGROUP_ADD:     32,
+	WAITGROUP_WAIT:    33,
+	API_CONC_BUILTIN:  34,
 }
 
-// Basic synthetic node structure.
-// All synthetic node types should embed it.
-type Synthetic struct {
-	BaseNode
-	fun   *ssa.Function
-	block *ssa.BasicBlock
-	id    string
-}
+// Types of synthetic nodes.
+type (
+	// Synthetic is the basic implementation of synthetic nodes, which must embed it.
+	Synthetic struct {
+		baseNode
 
-type BlockEntry struct{ Synthetic }
-type BlockExit struct{ Synthetic }
-type BlockEntryDefer struct{ Synthetic }
-type BlockExitDefer struct{ Synthetic }
-type FunctionEntry struct{ Synthetic }
-type FunctionExit struct{ Synthetic }
-type PendingGo struct{ Synthetic }
-type TerminateGoro struct {
-	Synthetic
-	cause _TERMINATION_CAUSE
-}
+		// fun is the function to which the synthetic node belongs.
+		fun *ssa.Function
+		// block is the basic block to which the synthetic node belongs.
+		block *ssa.BasicBlock
+		// id is a unique identifier.
+		id string
+	}
 
+	// BlockEntry is a synthetic node marking the entry to a block.
+	BlockEntry struct{ Synthetic }
+	// BlockExit is a synthetic node marking the exit from a block.
+	BlockExit struct{ Synthetic }
+	// BlockEntryDefer is a synthetic node marking the entry to a block when unwiding the defer stack.
+	BlockEntryDefer struct{ Synthetic }
+	// BlockExitDefer is a synthetic node marking the exit from a block when unwiding the defer stack.
+	BlockExitDefer struct{ Synthetic }
+	// FunctionEntry is a synthetic node marking the entry to function.
+	FunctionEntry struct{ Synthetic }
+	// FunctionEntry is a synthetic node marking the exit from a function.
+	FunctionExit struct{ Synthetic }
+	// PendingGo is TODO: unused?
+	PendingGo struct{ Synthetic }
+	// TerminateGoro is a synthetic node denoting that a goroutine is terminated.
+	TerminateGoro struct {
+		Synthetic
+		cause _TERMINATION_CAUSE
+	}
+)
+
+// _TERMINATION_CAUSE encodes the causes of goroutine termination.
 type _TERMINATION_CAUSE = int
 
+// GoroTermination enumerates the causes of goroutine termination.
+//
+//	EXIT_ROOT: the goroutine terminated by encountering the exit node of the function at its root.
+//	PERMANENTLY_BLOCKED: the goroutine terminated by becoming permanently blocked due to a caseless select statement.
+//	INFINITE_LOOP: the goroutine terminated by entering an infinite loop without communication operations.
 var GoroTermination = struct {
 	EXIT_ROOT           _TERMINATION_CAUSE
 	PERMANENTLY_BLOCKED _TERMINATION_CAUSE
@@ -116,85 +143,103 @@ var GoroTermination = struct {
 	INFINITE_LOOP:       2,
 }
 
-// Interface for synthetic nodes involving channel makechan SSA values.
-type ChnSynthetic interface {
-	AnySynthetic
-	Channel() ssa.Value
-}
+type (
+	// ChnSynthetic is implemented by all synthetic nodes involving channel makechan SSA values.
+	ChnSynthetic interface {
+		AnySynthetic
+		Channel() ssa.Value
+	}
 
-// Structure underlying any ChnSynthetic.
-type chnSynthetic struct {
-	Synthetic
-	chn ssa.Value
-}
+	// Structure underlying any channel synthetic node.
+	chnSynthetic struct {
+		Synthetic
+		chn ssa.Value
+	}
 
-type selectChnSynthetic struct {
-	chnSynthetic
-	Parent *Select
-	pos    token.Pos
-}
-type SelectSend struct {
-	selectChnSynthetic
-	Val ssa.Value
-}
-type SelectRcv struct {
-	selectChnSynthetic
-	Val ssa.Value
-	Ok  ssa.Value
-}
-type SelectDefault struct {
-	selectChnSynthetic
-}
-type Select struct {
-	Synthetic
-	ops  []ChnSynthetic
-	Insn *ssa.Select
-}
-type SelectDefer struct{ Synthetic }
-type DeferCall struct{ Synthetic }
-type PostDeferCall struct{ Synthetic }
-type PostCall struct{ Synthetic }
-type BuiltinCall struct {
-	Synthetic
-	Call    ssa.CallInstruction
-	builtin *ssa.Builtin
-}
-type Waiting struct {
-	Synthetic
-	Call ssa.CallInstruction
-}
-type Waking struct {
-	Synthetic
-	Call ssa.CallInstruction
-}
-type APIConcBuiltinCall struct {
-	Synthetic
-	Call ssa.CallInstruction
-}
+	// selectChnSynthetic is a synthetic channel node specialized for select statements.
+	selectChnSynthetic struct {
+		chnSynthetic
+		Parent *Select
+		pos    token.Pos
+	}
+	// SelectSend is a synthetic channel node encoding a send case in a select statement.
+	SelectSend struct {
+		selectChnSynthetic
+		Val ssa.Value
+	}
+	// SelectRcv is a synthetic channel node encoding a receive case in a select statement.
+	SelectRcv struct {
+		selectChnSynthetic
+		Val ssa.Value
+		Ok  ssa.Value
+	}
+	// SelectDefault is a synthetic channel node encoding a default case in a select statement.
+	SelectDefault struct {
+		selectChnSynthetic
+	}
 
+	// Select is a synthetic node encoding the entry to a select statement.
+	Select struct {
+		Synthetic
+		ops  []ChnSynthetic
+		Insn *ssa.Select
+	}
+	// SelectDefer is a synthetic node that maps the control flow underneath a select statement,
+	// when unwinding the defer stack.
+	SelectDefer struct{ Synthetic }
+	// DeferCall is a synthetic node denoting the entry to a deferred function call.
+	DeferCall struct{ Synthetic }
+	// PostDeferCall is a synthetic node denoting the exit from a deferred function call.
+	PostDeferCall struct{ Synthetic }
+	// PostCall is a synthetic node that maps the control flow after exiting a call instruction.
+	PostCall struct{ Synthetic }
+	// BuiltinCall is a synthetic node representing a call to builtin function.
+	BuiltinCall struct {
+		Synthetic
+		Call    ssa.CallInstruction
+		builtin *ssa.Builtin
+	}
+	// Waiting is a synthetic node denoting that a goroutine has started waiting due to a Cond.Wait call.
+	Waiting struct {
+		Synthetic
+		Call ssa.CallInstruction
+	}
+	// Waking is a synthetic node denoting that a goroutine has started waking from a Cond.Wait call after
+	// being signalled by a corresponding Cond.Signal or Cond.Broadcast call.
+	Waking struct {
+		Synthetic
+		Call ssa.CallInstruction
+	}
+	// APIConcBuiltinCall denotes invocations of the builtin concurrency primitive API.
+	APIConcBuiltinCall struct {
+		Synthetic
+		Call ssa.CallInstruction
+	}
+)
+
+// Channel retrieves the SSA value denoting the channel in a synthetic channel node.
 func (n *chnSynthetic) Channel() ssa.Value {
 	return n.chn
 }
 
-// Universal implementation of synthetic node configuration.
-// Used when creating synthetic nodes. When instantiating,
-// only the necessary fields need to be specified,
-// depending on the type of the defined node.
+// SynthoConfig is a universal implementation of synthetic node configuration.
+// Used when creating synthetic nodes. When instantiating, only the necessary
+// fields need to be specified, depending on the type of the defined node.
 type SynthConfig struct {
 	// Mandatory: specifies the type of synthetic node.
 	Type SYNTH_TYPE_ID
-	// Parent function
+	// Function denotes the parent function
 	Function *ssa.Function
-	// Parent basic block
+	// Block denotes the parent basic block
 	Block *ssa.BasicBlock
-	// Associated instruction
+	// Insn is the associated instruction
 	Insn ssa.Instruction
-	// Used for nodes related to channel values
+	// Chn is used for nodes related to channel values
 	Chn *ssa.MakeChan
-	// Other locations which might be used
+	// Call is used by nodes related to call instructions.
 	Call ssa.CallInstruction
-	// Arbitrary list of values.
-	// Different uses for different types of synthetic nodes
+	// Vals denotes other locations which might be used are encoded as an arbitrary list of values.
+	// The uses differ for each type of synthetic nodes, and are encoded as follows:
 	// -- Builtin calls:
 	//			0 - builtin function
 	// -- Select send case nodes:
@@ -202,56 +247,56 @@ type SynthConfig struct {
 	//			1 - sent value
 	// -- Select receive case nodes:
 	//			0 - channel
-	//			1 - received value (if receive with assignment)
-	//			2 - received ok (if receive with tuple assignment)
+	//			1 - received value (if receive with assignment, e. g. x = <-c)
+	//			2 - received ok (if receive with tuple assignment, e. g. x, ok = <-c)
 	Vals []ssa.Value
-	// The index of case branch in a select statement
+	// SelectIndex is the index of case branch in a select statement
 	SelectIndex int
-	// All case branches of a synthetic select node
+	// SelectOps denotes all case branches of a synthetic select node
 	SelectOps []ChnSynthetic
-	// The parent select node of a select case branch node
+	// SelectParent denotes the parent select node of a select case branch node
 	SelectParent *Select
-	// The source position of the select branch
+	// Pos is the token encoding the appropriate source position of the synthetic node.
 	Pos token.Pos
-	// Cause of goroutine termination
+	// TerminationCause is used for synthetic termination nodes.
 	TerminationCause _TERMINATION_CAUSE
-	// Optional suffixes
+	// IdSuffixes encodes all optional suffixes used for the synthetic node ID.
 	IdSuffixes []string
 }
 
-// All synthetic nodes must implement this interface
+// AnySynthetic is an interface that must be implemented by all synthetic nodes.
 type AnySynthetic interface {
-	// Extends the universal Node interface
+	// Extends the universal Node interface.
 	Node
-	// Synthetic node ID
+	// Synthetic node ID.
 	Id() string
-	// Parent basic block
+	// Parent basic block.
 	Block() *ssa.BasicBlock
 	// Initialization synthetic node structures,
-	// e. g. successor/predecessor maps
+	// e. g. successor/predecessor maps.
 	Init(config SynthConfig, id string)
 }
 
+// Id retrieves the unique ID of a synthetic node.
 func (n *Synthetic) Id() string {
 	return n.id
 }
 
-// Public API for creating synthetic nodes.
-// Useful for creating stand-alone nodes
-// outside the globally computed CFG
+// CreateSynthetic is the public API for creating synthetic nodes.
+// Useful for creating stand-alone nodes outside the globally computed CFG.
 func CreateSynthetic(config SynthConfig) (n Node) {
 	// Create synthetic ID here (avoids recomputing later).
 	return createSynthetic(config, syntheticId(config))
 }
 
-// Public wrapper around addSynthetic. Like `CreateSynthetic` but does not
-// generate a new node if a identical previous one exists.
+// AddSynthetic is a public wrapper around addSynthetic. Like `CreateSynthetic` it but does not
+// generate a new node if an identical previous one exists.
 func (cfg *Cfg) AddSynthetic(config SynthConfig) Node {
 	node, _ := cfg.addSynthetic(config)
 	return node
 }
 
-// Create a synthetic node, given the configuration and computed ID.
+// createSynthetic creates a synthetic node, given the configuration and computed ID.
 func createSynthetic(config SynthConfig, id string) Node {
 	var n AnySynthetic
 	// Allocate memory for a different type of synthetic node,
@@ -466,7 +511,6 @@ func (n *Synthetic) Init(config SynthConfig, id string) {
 	n.succ = make(map[Node]struct{})
 	n.pred = make(map[Node]struct{})
 	n.spawn = make(map[Node]struct{})
-	n.spawners = make(map[Node]struct{})
 	n.panickers = make(map[Node]struct{})
 	n.id = id
 	if config.Insn != nil {
@@ -482,30 +526,42 @@ func (n *Synthetic) Init(config SynthConfig, id string) {
 	}
 }
 
+// Function returns the parent function of a synthetic node.
 func (n *Synthetic) Function() *ssa.Function {
 	return n.fun
 }
 
+// Channel is not defined for arbitrary synthetic nodes.
 func (n *Synthetic) Channel() ssa.Value {
 	panic(fmt.Sprintf("Cannot lookup Channel of %s", n))
 }
 
+// Mutex is not defined for arbitrary synthetic nodes.
 func (n *Synthetic) Mutex() ssa.Value {
 	panic(fmt.Sprintf("Cannot lookup Mutex of %s", n))
 }
 
+// RWMutex is not defined for arbitrary synthetic nodes.
 func (n *Synthetic) RWMutex() ssa.Value {
 	panic(fmt.Sprintf("Cannot lookup RWMutex of %s", n))
 }
 
+// Locker is not defined for arbitrary synthetic nodes.
 func (n *Synthetic) Locker() ssa.Value {
 	panic(fmt.Sprintf("Cannot lookup Locker of %s", n))
 }
 
+// Cond is not defined for arbitrary synthetic nodes.
 func (n *Synthetic) Cond() ssa.Value {
 	panic(fmt.Sprintf("Cannot lookup Cond of %s", n))
 }
 
+// WaitGroup is not defined for arbitrary synthetic nodes.
+func (n *Synthetic) WaitGroup() ssa.Value {
+	panic(fmt.Sprintf("Cannot lookup WaitGroup of %s", n))
+}
+
+// Block returns the parent basic block of the synthetic node.
 func (n *Synthetic) Block() *ssa.BasicBlock {
 	return n.block
 }
@@ -537,14 +593,17 @@ func (n *Select) Channel() (ret ssa.Value) {
 	return
 }
 
+// IsChannelOp is true for select nodes.
 func (n *Select) IsChannelOp() bool {
 	return true
 }
 
+// Cause returns the termination cause of a goroutine termination node.
 func (n *TerminateGoro) Cause() _TERMINATION_CAUSE {
 	return n.cause
 }
 
+// Args returns the arguments of a call to a built-in function.
 func (n *BuiltinCall) Args() []ssa.Value {
 	if n.Call != nil {
 		return n.Call.Common().Args
@@ -552,26 +611,42 @@ func (n *BuiltinCall) Args() []ssa.Value {
 	return nil
 }
 
+// Arg retrieves the argument at the given position for a built-in call.
 func (n *BuiltinCall) Arg(i int) ssa.Value {
 	return n.Call.Common().Args[i]
 }
 
+// Builtin retrieves the underlying builtin for a node denoting a call to a builtin function.
 func (n *BuiltinCall) Builtin() *ssa.Builtin {
 	return n.builtin
 }
 
+// Channel returns the underlying channel operated on by a builtin call. For `close` and `len`
+// builtins, it returns the first argument. It will panic for builtins not operating on channels.
 func (n *BuiltinCall) Channel() ssa.Value {
-	if n.builtin.Name() == "close" {
+	switch n.builtin.Name() {
+	case "close":
 		return n.Arg(0)
+	case "len":
+		// The built-in `len` only has a channel when the underlying type of
+		// its argument is a channel.
+		if len(n.Args()) != 1 {
+			break
+		}
+		if _, ok := n.Arg(0).Type().Underlying().(*types.Chan); ok {
+			return n.Arg(0)
+		}
 	}
 
 	return n.Synthetic.Channel()
 }
 
+// IsCommunicationNode is false for arbitrary synthetic nodes.
 func (n *Synthetic) IsCommunicationNode() bool {
 	return false
 }
 
+// IsCommunicationNode checks whether a deferred function call is a concurrency operation.
 func (n *DeferCall) IsCommunicationNode() bool {
 	if dfr := n.dfr; dfr != nil {
 		dfr, ok := dfr.(*SSANode)
@@ -588,6 +663,7 @@ func (n *DeferCall) IsCommunicationNode() bool {
 	return false
 }
 
+// Instruction returns the SSA instruction denoted by a deferred call.
 func (n *DeferCall) Instruction() ssa.Instruction {
 	if dfr := n.dfr; dfr != nil {
 		dfr, ok := dfr.(*SSANode)
@@ -600,10 +676,12 @@ func (n *DeferCall) Instruction() ssa.Instruction {
 	return nil
 }
 
+// Channel is nil for a deferred call.
 func (n *DeferCall) Channel() ssa.Value {
 	return nil
 }
 
+// Cond returns the conditional value operated on by a deferred call or method invocation.
 func (n *DeferCall) Cond() ssa.Value {
 	if dfr := n.dfr; dfr != nil {
 		if dfr, ok := dfr.(*SSANode); ok {
@@ -613,6 +691,17 @@ func (n *DeferCall) Cond() ssa.Value {
 	return nil
 }
 
+// WaitGroup returns the waitgroup value operated on by a deferred call or method invocation.
+func (n *DeferCall) WaitGroup() ssa.Value {
+	if dfr := n.dfr; dfr != nil {
+		if dfr, ok := dfr.(*SSANode); ok {
+			return getWaitGroup(dfr.Instruction())
+		}
+	}
+	return nil
+}
+
+// Mutex returns the mutex value operated on by a deferred call or method invocation.
 func (n *DeferCall) Mutex() ssa.Value {
 	if dfr := n.dfr; dfr != nil {
 		dfr, ok := dfr.(*SSANode)
@@ -625,6 +714,7 @@ func (n *DeferCall) Mutex() ssa.Value {
 	return nil
 }
 
+// RWMutex returns the read-write mutex value operated on by a deferred call or method invocation.
 func (n *DeferCall) RWMutex() ssa.Value {
 	if dfr := n.dfr; dfr != nil {
 		dfr, ok := dfr.(*SSANode)
@@ -637,6 +727,7 @@ func (n *DeferCall) RWMutex() ssa.Value {
 	return nil
 }
 
+// Locker retrieves the locker operand of a given CF-node. May panic if the node is not locker-related.
 func (n *DeferCall) Locker() ssa.Value {
 	if dfr := n.dfr; dfr != nil {
 		dfr, ok := dfr.(*SSANode)
@@ -650,94 +741,140 @@ func (n *DeferCall) Locker() ssa.Value {
 	return nil
 }
 
+// Locker retrieves the locker operand of a given CF-node. May panic if the node is not locker-related.
 func (n *APIConcBuiltinCall) Locker() ssa.Value {
 	return getLocker(n.Call)
 }
 
+// Cond retrieves the channel operand of a given CF-node. May panic if the node is not conditional variable-related.
 func (n *APIConcBuiltinCall) Cond() ssa.Value {
 	return getCond(n.Call)
 }
 
+// IsCommunicationNode is true for select operations.
 func (n *Select) IsCommunicationNode() bool {
 	return true
 }
 
+// CommTransitive retrieves the nearest communication transitive successors of current node.
+// It returns the current node, if it represents a concurrency operation.
 func (n *Select) CommTransitive() map[Node]struct{} {
 	return map[Node]struct{}{n: {}}
 }
 
+// IsCommunicatioNode is true for receive cases of select statements.
 func (n *SelectRcv) IsCommunicationNode() bool {
 	return true
 }
 
+// CommTransitive retrieves the nearest communication transitive successors of current node.
+// It returns the current node, if it represents a concurrency operation.
 func (n *SelectRcv) CommTransitive() map[Node]struct{} {
 	return map[Node]struct{}{n: {}}
 }
 
+// IsCommunicatioNode is true for send cases of select statements.
 func (n *SelectSend) IsCommunicationNode() bool {
 	return true
 }
 
+// CommTransitive retrieves the nearest communication transitive successors of current node.
+// It returns the current node, if it represents a concurrency operation.
 func (n *SelectSend) CommTransitive() map[Node]struct{} {
 	return map[Node]struct{}{n: {}}
 }
 
+// IsCommunicatioNode is true for default cases of select statements.
 func (n *SelectDefault) IsCommunicationNode() bool {
 	return true
 }
 
+// CommTransitive retrieves the nearest communication transitive successors of current node.
+// It returns the current node, if it represents a concurrency operation.
 func (n *SelectDefault) CommTransitive() map[Node]struct{} {
 	return map[Node]struct{}{n: {}}
 }
 
+// IsCommunicatioNode is true for nodes encoding goroutine termination.
 func (n *TerminateGoro) IsCommunicationNode() bool {
 	return true
 }
 
+// CommTransitive retrieves the nearest communication transitive successors of current node.
+// It returns the current node, if it represents a concurrency operation.
 func (n *TerminateGoro) CommTransitive() map[Node]struct{} {
 	return map[Node]struct{}{n: {}}
 }
 
+// IsCommunicationNode checks whether the CF-node denotes a concurrency operation.
 func (n *PendingGo) IsCommunicationNode() bool {
 	return true
 }
 
+// CommTransitive retrieves the nearest communication transitive successors of current node.
+// It returns the current node, if it represents a concurrency operation.
 func (n *PendingGo) CommTransitive() map[Node]struct{} {
 	return map[Node]struct{}{n: {}}
 }
 
+// IsCommunicatioNode is true for builtin call nodes where the builtin function is `close`
+// or `len` on a channel.
 func (n *BuiltinCall) IsCommunicationNode() bool {
-	return n.builtin.Name() == "close"
+	switch n.builtin.Name() {
+	case "close":
+		return true
+	case "len":
+		if n.Call.Value() == nil {
+			// The builtin call to `len` is not relevant for concurrency when used with `defer` and `go`
+			// because its result cannot be used elsewhere. Any interleavings can be discarded.
+			break
+		}
+
+		if len(n.Args()) == 1 {
+			// The builtin call to `len` is only relevant if its argument is a channel.
+			_, ok := n.Arg(0).Type().Underlying().(*types.Chan)
+			return ok
+		}
+	}
+	return false
 }
 
+// CommTransitive retrieves the nearest communication transitive successors of current node.
+// It returns the current node, if it represents a concurrency operation.
 func (n *BuiltinCall) CommTransitive() map[Node]struct{} {
-	if n.builtin.Name() == "close" {
+	if n.IsCommunicationNode() {
 		return map[Node]struct{}{n: {}}
 	}
 
 	return n.Synthetic.CommTransitive()
 }
 
+// IsCommunicatioNode is true for nodes representing that a goroutine is waiting on a conditional variable.
 func (n *Waiting) IsCommunicationNode() bool {
 	return true
 }
 
+// IsCommunicatioNode is true for nodes representing that a goroutine is waking after waiting on a conditional variable.
 func (n *Waking) IsCommunicationNode() bool {
 	return true
 }
 
+// IsCommunicatioNode is true for invocations of methods on standard library concurrency primitives.
 func (n *APIConcBuiltinCall) IsCommunicationNode() bool {
 	return true
 }
 
+// Cond retrieves the conditional varaible operand of a given CF-node. May panic if the node is not conditional variable-related.
 func (n *Waiting) Cond() ssa.Value {
 	return n.Call.Common().Args[0]
 }
 
+// Cond retrieves the conditional varaible operand of a given CF-node. May panic if the node is not conditional variable-related.
 func (n *Waking) Cond() ssa.Value {
 	return n.Call.Common().Args[0]
 }
 
+// Instruction retrieves the SSA instruction underlying the CF-node.
 func (n *Waiting) Instruction() ssa.Instruction {
 	switch n := n.Predecessor().(type) {
 	case *SSANode:
@@ -748,6 +885,7 @@ func (n *Waiting) Instruction() ssa.Instruction {
 	return nil
 }
 
+// Instruction retrieves the SSA instruction underlying the CF-node.
 func (n *Waking) Instruction() ssa.Instruction {
 	switch n := n.Predecessor().(type) {
 	case *SSANode:
@@ -758,46 +896,50 @@ func (n *Waking) Instruction() ssa.Instruction {
 	return nil
 }
 
+// Instruction retrieves the SSA instruction underlying the CF-node.
 func (n *APIConcBuiltinCall) Instruction() ssa.Instruction {
 	return n.Call
 }
 
+// CallInstruction retrieves the SSA call instruction underlying the CF-node.
 func (n *Waiting) CallInstruction() ssa.CallInstruction {
 	return n.Call
 }
 
+// CallInstruction retrieves the SSA call instruction underlying the CF-node.
 func (n *Waking) CallInstruction() ssa.CallInstruction {
 	return n.Call
 }
 
+// CallInstruction retrieves the SSA call instruction underlying the CF-node.
 func (n *APIConcBuiltinCall) CallInstruction() ssa.CallInstruction {
 	return n.Call
 }
 
-func (n *Waiting) String() string {
-	return "[ " + n.Cond().Name() + ".Waiting ]"
-}
-
-func (n *Waking) String() string {
-	return "[ " + n.Cond().Name() + ".Waking ]"
-}
-
+// Pos retrieves the source location position of the CF-node.
 func (n *Waiting) Pos() token.Pos {
 	return n.Call.Pos()
 }
 
+// Pos retrieves the source location position of the CF-node.
 func (n *Waking) Pos() token.Pos {
 	return n.Call.Pos()
 }
 
+// CommTransitive retrieves the nearest communication transitive successors of current node.
+// It returns the current node, if it represents a concurrency operation.
 func (n *Waiting) CommTransitive() map[Node]struct{} {
 	return map[Node]struct{}{n: {}}
 }
 
+// CommTransitive retrieves the nearest communication transitive successors of current node.
+// It returns the current node, if it represents a concurrency operation.
 func (n *Waking) CommTransitive() map[Node]struct{} {
 	return map[Node]struct{}{n: {}}
 }
 
+// CommTransitive retrieves the nearest communication transitive successors of current node.
+// It returns the current node, if it represents a concurrency operation.
 func (n *APIConcBuiltinCall) CommTransitive() map[Node]struct{} {
 	return map[Node]struct{}{n: {}}
 }
@@ -806,18 +948,13 @@ func (n *Synthetic) String() string {
 	return fmt.Sprintf("[ %s ]", n.Id())
 }
 
-func (n *SelectSend) Payload() ssa.Value {
-	return n.Val
-}
-
-func (n *SelectRcv) CommaOk() bool {
-	return n.Ok != nil
-}
-
+// Pos retrieves the source location position of the CF-node.
 func (Synthetic) Pos() token.Pos {
 	return token.NoPos
 }
 
+// CommTransitive retrieves the nearest communication transitive successors of current node.
+// It returns the current node, if it represents a concurrency operation.
 func (n *Synthetic) CommTransitive() map[Node]struct{} {
 	succs := make(map[Node]struct{})
 	visited := make(map[Node]struct{})
@@ -848,54 +985,67 @@ func (n *Synthetic) CommTransitive() map[Node]struct{} {
 	return succs
 }
 
+// Pos retrieves the source location position of the CF-node.
 func (n *PostCall) Pos() token.Pos {
 	return n.CallRelationNode().Pos()
 }
 
+// Pos retrieves the source location position of the CF-node.
 func (n *DeferCall) Pos() token.Pos {
 	return n.DeferLink().Pos()
 }
 
+// Pos retrieves the source location position of the CF-node.
 func (n *PostDeferCall) Pos() token.Pos {
 	return n.CallRelationNode().Pos()
 }
 
+// Pos retrieves the source location position of the CF-node.
 func (n *FunctionEntry) Pos() token.Pos {
 	return n.fun.Pos()
 }
 
+// Pos retrieves the source location position of the CF-node.
 func (n *FunctionExit) Pos() token.Pos {
 	return n.fun.Pos()
 }
 
+// Pos retrieves the source location position of the CF-node.
 func (n *TerminateGoro) Pos() token.Pos {
 	return n.fun.Pos()
 }
 
+// Pos retrieves the source location position of the CF-node.
 func (n *SelectRcv) Pos() token.Pos {
 	return n.pos
 }
 
+// Pos retrieves the source location position of the CF-node.
 func (n *SelectSend) Pos() token.Pos {
 	return n.pos
 }
 
+// Pos retrieves the source location position of the CF-node.
 func (n *SelectDefault) Pos() token.Pos {
 	return n.pos
 }
 
+// Pos retrieves the source location position of the CF-node.
 func (n *Select) Pos() token.Pos {
 	return n.Insn.Pos()
 }
 
+// Pos retrieves the source location position of the CF-node.
 func (n *SelectDefer) Pos() token.Pos {
 	return n.dfr.Pos()
 }
 
+// Pos retrieves the source location position of the CF-node.
 func (n *BuiltinCall) Pos() token.Pos {
 	return n.Call.Pos()
 }
 
+// Pos retrieves the source location position of the CF-node.
 func (n *APIConcBuiltinCall) Pos() token.Pos {
 	return n.Call.Pos()
 }
@@ -1009,4 +1159,12 @@ func (n *FunctionExit) String() string {
 
 func (n *APIConcBuiltinCall) String() string {
 	return "[ " + n.Call.String() + " ]"
+}
+
+func (n *Waiting) String() string {
+	return "[ " + n.Cond().Name() + ".Waiting ]"
+}
+
+func (n *Waking) String() string {
+	return "[ " + n.Cond().Name() + ".Waking ]"
 }

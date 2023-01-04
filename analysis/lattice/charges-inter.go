@@ -5,8 +5,9 @@ import (
 	"github.com/cs-au-dk/goat/utils"
 )
 
-//go:generate go run generate-map.go ThreadCharges defs.Goro Charges
+//go:generate go run generate-map.go charges-inter
 
+// threadChargesLattice is a singleton instantiation of the latti
 var threadChargesLattice = &ThreadChargesLattice{mapLatticeBase{rng: chargesLattice}}
 
 func (latticeFactory) ThreadCharges() *ThreadChargesLattice {

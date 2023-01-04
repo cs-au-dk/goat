@@ -14,6 +14,7 @@ func main() {
 	go func() {
 		// No unlock after wait, so this may block
 		c.L.Lock() //@ blocks
+		//panic("")
 	}()
 
 	// This may block if Signal occurs before Wait

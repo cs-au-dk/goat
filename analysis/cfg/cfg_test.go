@@ -27,7 +27,7 @@ func TestCompressAndPanicCont(t *testing.T) {
 
 	program, ssaPkgs := ssautil.AllPackages(pkgs, ssa.SanityCheckFunctions)
 	program.Build()
-	results := upfront.Andersen(program, ssaPkgs, upfront.IncludeType{All: true})
+	results := &upfront.Andersen(program, ssaPkgs, upfront.IncludeType{All: true}).Result
 
 	cfg := new(Cfg)
 	cfg.init()

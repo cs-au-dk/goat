@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	u "github.com/cs-au-dk/goat/analysis/upfront"
 	"github.com/cs-au-dk/goat/pkgutil"
 
 	"golang.org/x/tools/go/packages"
@@ -183,7 +184,7 @@ func TestLoopInline(t *testing.T) {
 			t.Fatal("Failed to load package:", err)
 		}
 
-		err = InlineLoops(pkgs)
+		err = u.ASTTranform(pkgs, Transform)
 		if err != nil {
 			t.Errorf("Error occurred during inlining %v", err)
 		}
@@ -241,7 +242,7 @@ func TestLoopInline(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		err = InlineLoops(pkgs)
+		err = u.ASTTranform(pkgs, Transform)
 
 		for _, pkg := range pkgs {
 			for _, file := range pkg.Syntax {

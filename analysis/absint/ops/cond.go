@@ -4,7 +4,7 @@ import (
 	L "github.com/cs-au-dk/goat/analysis/lattice"
 )
 
-// Models stepping into .Wait() calls.
+// CondWait models stepping into .Wait() calls.
 // Any .Wait() call involves checking whether the associated mutex
 // may be locked. If the mutex may be unlocked, then executing
 // .Wait() might result in a fatal exception.
@@ -57,7 +57,7 @@ func CondWait(val L.AbstractValue) L.OpOutcomes {
 	return OUTCOME
 }
 
-// Called when a thread tries to wakes up either from a call to .Signal() or .Broadcast().
+// CondWake models a thread trying to wake up either from a call to .Signal() or .Broadcast().
 // Checks whether the associated mutex may be unlocked, in which case waking will succeed.
 func CondWake(val L.AbstractValue) L.OpOutcomes {
 	LOCKED, UNLOCKED := L.Consts().Mutex()
@@ -79,9 +79,9 @@ func CondWake(val L.AbstractValue) L.OpOutcomes {
 	case val.IsRWMutex():
 		rmu := val.RWMutexValue()
 
-		// If the mutex may be write unlocked, and no read locks
-		// are registered, then there is a success scenario
-		// where the mutex is locked again. In that case,
+		// If the mutex may be write unlocked, and no read locks are registered,
+		// then there is a success scenario where the mutex is locked again. In that case,
+		// the rw-mutex is guaranteed to have no read-locks.
 		if rmu.Status().Geq(UNLOCKED) &&
 			rmu.RLocks().Geq(NORLOCKS) {
 			return SUCCEEDS(val.UpdateRWMutex(

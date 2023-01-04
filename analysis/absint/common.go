@@ -2,8 +2,10 @@ package absint
 
 import (
 	"fmt"
+	"go/types"
 	"log"
 
+	"github.com/cs-au-dk/goat/analysis/absint/ops"
 	"github.com/cs-au-dk/goat/analysis/cfg"
 	"github.com/cs-au-dk/goat/analysis/defs"
 	L "github.com/cs-au-dk/goat/analysis/lattice"
@@ -15,16 +17,26 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-var (
-	opts = utils.Opts()
+type (
+	// AIConfig is a wrapper around the preparation configuration for
+	// abstract interpretation.
+	AIConfig struct {
+		Metrics bool
+		Log     bool
+	}
 )
 
 var (
+	// opts is a short-hand for retrieving configuration options.
+	opts = utils.Opts()
+
+	// Lattices is a short-hand for the lattice factory in the analysis/lattice package.
 	Lattices = L.Create().Lattice
+	// Elements is a short-hand for the lattice element factory in the analysis/lattice package.
 	Elements = L.Create().Element
 )
 
-// Backwards compat.
+// setFragmentPredicate is here for backwards compat.
 func (C *AnalysisCtxt) setFragmentPredicate(Localized, AnalyzeCallsWithoutConcurrencyPrimitives bool) {
 	C.FragmentPredicate = func(callIns ssa.CallInstruction, sfun *ssa.Function) bool {
 		// Wrapper functions have no .Pkg field but are cheap to analyze.
@@ -45,24 +57,25 @@ func (C *AnalysisCtxt) setFragmentPredicate(Localized, AnalyzeCallsWithoutConcur
 			return true
 		}
 
+		pt := &C.LoadRes.Pointer.Result
 		if !AnalyzeCallsWithoutConcurrencyPrimitives {
 			// Determine whether a function involves concurrency primitives.
 			// It does, if any of its parameters, free variables or its return type
 			// carries a concurrency primitive
 			for _, p := range sfun.Params {
-				if utils.ValHasConcurrencyPrimitives(p, C.LoadRes.Pointer) {
+				if utils.ValHasConcurrencyPrimitives(p, pt) {
 					return true
 				}
 			}
 
 			for _, p := range sfun.FreeVars {
-				if utils.ValHasConcurrencyPrimitives(p, C.LoadRes.Pointer) {
+				if utils.ValHasConcurrencyPrimitives(p, pt) {
 					return true
 				}
 			}
 
 			if v, ok := callIns.(ssa.Value); ok {
-				return utils.ValHasConcurrencyPrimitives(v, C.LoadRes.Pointer)
+				return utils.ValHasConcurrencyPrimitives(v, pt)
 			}
 		}
 
@@ -73,36 +86,17 @@ func (C *AnalysisCtxt) setFragmentPredicate(Localized, AnalyzeCallsWithoutConcur
 	}
 }
 
-type prepAI struct {
-	metrics bool
-	log     bool
-}
-
-type AIConfig = struct {
-	Metrics bool
-	Log     bool
-}
-
-// Prepare Abstract Interpretation based on a
-// configuration (e. g. collect metrics)
-func ConfigAI(c AIConfig) prepAI {
-	return prepAI{
-		metrics: c.Metrics,
-		log:     c.Log,
-	}
-}
-
 // Interface to prepare abstract interpretation.
 // Depending on preparation, generates a different analysis context
-func PrepareAI() prepAI {
-	return prepAI{}
+func PrepareAI() AIConfig {
+	return AIConfig{}
 }
 
 // Prepare abstract interpretation for top level execution.
 // Makes use of the executable flags and other options.
 // Since a top-level execution may involve analysis of all functions,
 // it produces a set of analysis contexts
-func (p prepAI) Executable(loadRes tu.LoadResult) map[*ssa.Function]AnalysisCtxt {
+func (p AIConfig) Executable(loadRes tu.LoadResult) map[*ssa.Function]AnalysisCtxt {
 	mainPkg := pkgutil.GetMain(loadRes.Mains)
 	var root, entry *ssa.Function
 	switch {
@@ -197,7 +191,7 @@ func (p prepAI) Executable(loadRes tu.LoadResult) map[*ssa.Function]AnalysisCtxt
 }
 
 // Prepare abstract interpretation for whole program analysis
-func (p prepAI) WholeProgram(loadRes tu.LoadResult) AnalysisCtxt {
+func (p AIConfig) WholeProgram(loadRes tu.LoadResult) AnalysisCtxt {
 	mainPkg := pkgutil.GetMain(loadRes.Mains)
 
 	return p.prep(
@@ -207,9 +201,19 @@ func (p prepAI) WholeProgram(loadRes tu.LoadResult) AnalysisCtxt {
 	)
 }
 
+// FragmentPredicate denotes all functions that can be used to determine whether
+// a potential callee at a given call instruction is included in the analysis fragment.
 type FragmentPredicate = func(ssa.CallInstruction, *ssa.Function) bool
+
+// AnalysisCtxt contains all necessary contextual information for performing static analysis
+// on a given fragment.
 type AnalysisCtxt struct {
-	Function  *ssa.Function
+	// Metrics collection
+	*Metrics
+
+	// Function represnts the function action as entry point for the fragment
+	Function *ssa.Function
+	//
 	LoadRes   tu.LoadResult
 	InitConf  *AbsConfiguration
 	InitState L.AnalysisState
@@ -218,11 +222,8 @@ type AnalysisCtxt struct {
 	// fragment of the program to analyze.
 	FragmentPredicate FragmentPredicate
 
-	// Akin to "PSet" in GCatch
+	// FocusedPrimitives represents a set of values which are relevant during analysis.
 	FocusedPrimitives []ssa.Value
-
-	// Metrics collection
-	Metrics *Metrics
 
 	// Is AI logging enabled?
 	// Current superloc
@@ -258,18 +259,14 @@ func (C AnalysisCtxt) CheckMaxSuperloc(s defs.Superloc, spawnee defs.Goro) {
 	}
 }
 
+// CheckPointsTo
 func (C AnalysisCtxt) CheckPointsTo(v L.PointsTo) {
-	const LARGE_PT_SET = 20
-
 	if C.Log.Enabled {
 		size := v.Size()
 		if *C.Log.MaxPointsToSize < size {
 			log.Println("Largest points-to set size found so far has size", size)
 			*C.Log.MaxPointsToSize = size
 		}
-		// if size > 20 {
-		// 	log.Println("Large points-to set encountered", size)
-		// }
 	}
 }
 
@@ -282,6 +279,7 @@ func (C AnalysisCtxt) CheckMemory(m L.Memory) {
 		// }
 	}
 }
+
 func representative(l loc.AddressableLocation) (loc.AllocationSiteLocation, bool) {
 	switch l := l.(type) {
 	case loc.AllocationSiteLocation:
@@ -412,7 +410,7 @@ func (C AnalysisCtxt) LogCtrLocMemory(g defs.Goro, cl defs.CtrLoc, m L.Memory) {
 // as to whether the abstract interpretation will be performed on a
 // harnessed function. For harnessed functions, parameters and free variables
 // will be instantiated to top.
-func (p prepAI) prep(
+func (p AIConfig) prep(
 	root *ssa.Function,
 	entryFun *ssa.Function,
 	loadRes tu.LoadResult,
@@ -429,8 +427,7 @@ func (p prepAI) prep(
 	// Define entry goroutine
 	goro := defs.Create().Goro(cl, nil)
 	// Define entry superlocation (configuration)
-	s0 := Create().AbsConfiguration(ABS_COARSE).DeriveThread(goro, cl)
-	s0.Target = goro
+	s0 := Create().AbsConfiguration().DeriveThread(goro, cl)
 
 	// Define initial state
 	initState := Elements().AnalysisState(
@@ -473,7 +470,7 @@ func (p prepAI) prep(
 		Metrics:   p.InitializeMetrics()(entryFun),
 	}
 
-	if p.log {
+	if p.Log {
 		C.Log.Enabled = true
 		C.Log.MaxSuperloc = new(int)
 		C.Log.MaxPointsToSize = new(int)
@@ -494,21 +491,48 @@ func (p prepAI) prep(
 	return C
 }
 
-// Prepare function for abstract interpretation.
-// Assumes the function is harnessed.
-func (p prepAI) Function(fun *ssa.Function) func(tu.LoadResult) AnalysisCtxt {
+// Function prepares a function for abstract interpretation. Assumes the function is harnessed.
+func (p AIConfig) Function(fun *ssa.Function) func(tu.LoadResult) AnalysisCtxt {
 	return func(loadRes tu.LoadResult) AnalysisCtxt {
 		return p.prep(fun, fun, loadRes, true)
 	}
 }
 
-// Find a function with the given name in the load result,
-// and prepare it for abstract interpretation. Assumes the function
-// is harnessed.
-func (p prepAI) FunctionByName(name string, isHarnessed bool) func(tu.LoadResult) AnalysisCtxt {
+// FunctionByName finds a function with the given name in the load result,
+// and prepare it for abstract interpretation. Assumes the function is harnessed.
+func (p AIConfig) FunctionByName(name string, isHarnessed bool) func(tu.LoadResult) AnalysisCtxt {
 	return func(loadRes tu.LoadResult) AnalysisCtxt {
 		fun := loadRes.Cfg.FunctionByName(name)
 		return p.prep(fun, fun, loadRes, isHarnessed)
+	}
+}
+
+// IsLocationFocused checks whether the provided location points to a focused primitive.
+// If the provided location is an interface (mostly relevant for
+// sync.Locker interfaces), each wrapped location is checked instead.
+func (C AnalysisCtxt) IsLocationFocused(l loc.Location, mem L.Memory) bool {
+	if C.FocusedPrimitives == nil {
+		return true
+	}
+
+	if aL, ok := l.(loc.AllocationSiteLocation); ok {
+		if _, isItf := aL.Type().Underlying().(*types.Interface); isItf {
+			for _, ptr := range mem.GetUnsafe(aL).PointerValue().NonNilEntries() {
+				if C.IsLocationFocused(ptr, mem) {
+					return true
+				}
+			}
+
+			return false
+		}
+	}
+
+	aL := ops.GetAllocationSiteLocation(l)
+	if site, ok := aL.GetSite(); !ok {
+		log.Fatalf("%v has no site?", aL)
+		panic("unreachable")
+	} else {
+		return C.IsPrimitiveFocused(site)
 	}
 }
 
@@ -526,8 +550,9 @@ func (C AnalysisCtxt) IsPrimitiveFocused(prim ssa.Value) bool {
 	return false
 }
 
-// Computes a fragment predicate that includes all functions on paths to
-// concurrency operations that use the provided primitives, including their allocation.
+// FragmentPredicateFromPrimitives computes a fragment predicate that includes
+// all functions on paths to concurrency operations that use the provided primitives,
+// including their allocation site.
 func (C *AnalysisCtxt) FragmentPredicateFromPrimitives(
 	primitives []ssa.Value,
 	primitiveToUses map[ssa.Value]map[*ssa.Function]struct{},

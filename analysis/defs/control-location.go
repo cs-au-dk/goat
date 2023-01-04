@@ -9,6 +9,10 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
+// ctrlocContext exposes contextual information about a control location.
+// A control location's context include the root function of its goroutine's stack,
+// and whether the program would be panicked during that execution, or unwinding
+// its defer stack due to having called runtime.Goexit.
 type ctrlocContext struct {
 	root *ssa.Function
 	// True if the goroutine is in a panicked state
@@ -17,13 +21,14 @@ type ctrlocContext struct {
 	exiting bool
 }
 
-// NOTE: This struct is used as a map key in abs-config. It is therefore
-// important that it can be correctly compared with ==.
+// CtrLoc represents a control location in the analysis. It is used as a map key in abs-config,
+// so it is important that it can be correctly compared with ==.
 type CtrLoc struct {
 	node    cfg.Node
 	context ctrlocContext
 }
 
+// CtrLoc creates a a control location based on a node in the CFG, a root function, and
 func (factory) CtrLoc(n cfg.Node, root *ssa.Function, panicked bool) CtrLoc {
 	return CtrLoc{
 		n,
@@ -35,31 +40,40 @@ func (factory) CtrLoc(n cfg.Node, root *ssa.Function, panicked bool) CtrLoc {
 	}
 }
 
+// Node yields the node in a control location.
 func (cl CtrLoc) Node() cfg.Node {
 	return cl.node
 }
 
+// Context yields the control location context.
 func (cl CtrLoc) Context() ctrlocContext {
 	return cl.context
 }
 
+// Root yields the function called at the bottom of the stack of the control location's goroutine.
 func (cl CtrLoc) Root() *ssa.Function {
 	return cl.context.root
 }
 
+// Panicked yields whether the control location models an execution point in a panicked state.
 func (cl CtrLoc) Panicked() bool {
 	return cl.context.panicked
 }
 
+// Panicked yields whether the control location models an execution point in an exiting state.
 func (cl CtrLoc) Exiting() bool {
 	return cl.context.exiting
 }
 
+// WithExiting derives another control that inherits all the properties of the receiver
+// control location, but its context `exiting` field changes to the given value.
 func (cl CtrLoc) WithExiting(exiting bool) CtrLoc {
 	cl.context.exiting = exiting
 	return cl
 }
 
+// PosString returns a textual representation of the source location position for the
+// given control location.
 func (cl CtrLoc) PosString() string {
 	var nearestPos func(cfg.Node) cfg.Node
 	nearestPos = func(n cfg.Node) cfg.Node {
@@ -90,6 +104,7 @@ func (cl CtrLoc) PosString() string {
 	return fset.Position(n.Pos()).String()
 }
 
+// bhash computes a hash from a boolean value.
 func bhash(b bool) uint32 {
 	if b {
 		return 0x9e3779b9
@@ -98,6 +113,7 @@ func bhash(b bool) uint32 {
 	}
 }
 
+// Hash computes a 32-bit hash for control location based on all of its properties.
 func (cl CtrLoc) Hash() uint32 {
 	phasher := utils.PointerHasher[any]{}
 	return utils.HashCombine(
@@ -108,7 +124,7 @@ func (cl CtrLoc) Hash() uint32 {
 	)
 }
 
-// A control location is forking if it has more than one successor or predecessor.
+// Forking checks whether a control location has more than one successor or predecessor.
 func (cl CtrLoc) Forking() bool {
 	return (len(cl.Successors()) > 1 || len(cl.Node().Predecessors()) > 1)
 }
@@ -116,9 +132,6 @@ func (cl CtrLoc) Forking() bool {
 func (cl CtrLoc) String() string {
 	var str string
 	str += cl.node.String()
-	// if cl.Root() != nil {
-	// 	str = cl.Root().String() + ": " + str
-	// }
 	if cl.Panicked() {
 		str += "(!)"
 	}
@@ -128,7 +141,8 @@ func (cl CtrLoc) String() string {
 	return str
 }
 
-// Derive new control location from current one with given control flow node.
+// Derive a new control location, inheriting all the properties of the current control location,
+// where the control flow node is overridden by the provided argument.
 func (cl CtrLoc) Derive(n cfg.Node) CtrLoc {
 	return CtrLoc{
 		n,
@@ -136,17 +150,18 @@ func (cl CtrLoc) Derive(n cfg.Node) CtrLoc {
 	}
 }
 
-// Derive a batch of control locations from the provided set of control flow nodes.
-func (cl CtrLoc) DeriveBatch(mp map[cfg.Node]struct{}) map[CtrLoc]bool {
-	res := make(map[CtrLoc]bool)
+// DeriveBatch derives a batch of new control location for each given node in the CFG,
+// inheriting all properties of the receiver except the CF-node.
+func (cl CtrLoc) DeriveBatch(mp map[cfg.Node]struct{}) map[CtrLoc]struct{} {
+	res := make(map[CtrLoc]struct{})
 	for n := range mp {
-		res[cl.Derive(n)] = true
+		res[cl.Derive(n)] = struct{}{}
 	}
 	return res
 }
 
-// Derive control location successor from control flow node successor.
-// Will panic if there is more than one successor.
+// Successor derives control location successor from the successor of the CF-node at the
+// current control location. Will panic if there is not strictly one successor.
 func (cl CtrLoc) Successor() CtrLoc {
 	return CtrLoc{
 		cl.node.Successor(),
@@ -154,8 +169,8 @@ func (cl CtrLoc) Successor() CtrLoc {
 	}
 }
 
-// Derive control location predecessor from control flow node predecessor
-// Will panic if there is more than one predecessor.
+// Predecessor derives control location predecessor from the successor of the CF-node at the
+// current control location. Will panic if there is not strictly one predecessor.
 func (cl CtrLoc) Predecessor() CtrLoc {
 	return CtrLoc{
 		cl.node.Predecessor(),
@@ -163,7 +178,8 @@ func (cl CtrLoc) Predecessor() CtrLoc {
 	}
 }
 
-// Derive control location from the call relation node of the given node.
+// CallRelationNode derives control location predecessor from the call-relation node of the CF-node at the
+// current control location. Will panic if there the CF-node is a call-related node.
 func (cl CtrLoc) CallRelationNode() CtrLoc {
 	if crn := cl.Node().CallRelationNode(); crn != nil {
 		return cl.Derive(crn)
@@ -173,8 +189,8 @@ func (cl CtrLoc) CallRelationNode() CtrLoc {
 	)
 }
 
-// Derive the panic continuation from control flow defer link,
-// or from the given panic continuation.
+// Panic derives a panic continuation control location from control flow defer link,
+// or from the panic continuation of the CF-node at the current control location.
 func (cl CtrLoc) Panic() CtrLoc {
 	cl.context.panicked = true
 	switch {
@@ -189,7 +205,8 @@ func (cl CtrLoc) Panic() CtrLoc {
 	return cl
 }
 
-// Derive control location successors through control flow node.
+// Successors derives a set of control location successors from all the successors
+// of the CF-node at the current control location.
 func (cl CtrLoc) Successors() map[CtrLoc]struct{} {
 	succs := make(map[CtrLoc]struct{})
 
@@ -205,6 +222,7 @@ func (cl CtrLoc) Successors() map[CtrLoc]struct{} {
 	return succs
 }
 
+// Equal checks for structual equality between control locations.
 func (c1 CtrLoc) Equal(c2 CtrLoc) bool {
 	return c1.node == c2.node && c1.context == c2.context
 }

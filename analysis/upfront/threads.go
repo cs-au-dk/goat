@@ -5,6 +5,7 @@ import (
 	"golang.org/x/tools/go/ssa/ssautil"
 )
 
+// collectSpawns gathers all `go` instructions in an SSA program.
 func collectSpawns(prog *ssa.Program) (threads map[*ssa.Go]bool) {
 	threads = make(map[*ssa.Go]bool)
 

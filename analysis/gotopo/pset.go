@@ -1,11 +1,13 @@
 package gotopo
 
 import (
+	"fmt"
 	"go/token"
 	T "go/types"
 	"strings"
 
 	"github.com/cs-au-dk/goat/analysis/cfg"
+	u "github.com/cs-au-dk/goat/analysis/upfront"
 	"github.com/cs-au-dk/goat/pkgutil"
 	"github.com/cs-au-dk/goat/utils"
 	"github.com/cs-au-dk/goat/utils/graph"
@@ -14,7 +16,6 @@ import (
 
 	uf "github.com/spakin/disjoint"
 
-	"golang.org/x/tools/go/pointer"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -40,7 +41,7 @@ func blacklistPrimitive(p ssa.Value) bool {
 	// return false
 }
 
-func getPrimitives(v ssa.Value, pt *pointer.Result) (res map[ssa.Value]struct{}) {
+func getPrimitives(v ssa.Value, pt *u.PointerResult) (res map[ssa.Value]struct{}) {
 	res = make(map[ssa.Value]struct{})
 
 	var rec func(v ssa.Value)
@@ -51,23 +52,23 @@ func getPrimitives(v ssa.Value, pt *pointer.Result) (res map[ssa.Value]struct{})
 				continue
 			}
 
-			// switch pi := p.(type) {
-			// // case *ssa.MakeInterface:
-			// // 	rec(pi.X)
-			// // case *ssa.ChangeType:
-			// // 	rec(pi.X)
-			// default:
-			if _, ok := p.Type().Underlying().(*T.Chan); ok {
-				// ||
-				// 	utils.IsNamedType(p.Type(), "sync", "Mutex") ||
-				// 	utils.IsNamedType(p.Type(), "sync", "RWMutex") ||
-				// 	utils.IsNamedType(p.Type(), "sync", "Cond") ||
-				/* NOTE: Why was this restriction necessary?
-				Most mutexes come from struct fields. */
-				// true {
+			switch pi := p.(type) {
+			case *ssa.MakeInterface:
+				rec(pi.X)
+			case *ssa.ChangeType:
+				panic("ChangeType is a pointer analysis no-op?")
+			default:
+				/*
+					NOTE: Why was this restriction necessary?
+					Most mutexes come from struct fields.
+					if _, ok := p.Type().Underlying().(*T.Chan); ok {
+						||
+							utils.IsNamedType(p.Type(), "sync", "Mutex") ||
+							utils.IsNamedType(p.Type(), "sync", "RWMutex") ||
+							utils.IsNamedType(p.Type(), "sync", "Cond") ||
+				*/
 				res[p] = struct{}{}
 			}
-			// }
 		}
 	}
 
@@ -80,7 +81,7 @@ func (C psetCtxt) makeDependencyMapFromRootNode(
 	entry cfg.Node,
 	D map[ssa.Value]map[ssa.Value]struct{},
 	G graph.Graph[*ssa.Function],
-	pt *pointer.Result) {
+	pt *u.PointerResult) {
 	visited := make(map[*ssa.Function]struct{})
 	// Add v2 as a dependency of v1
 	addDep := func(v1, v2 ssa.Value) {
@@ -90,7 +91,7 @@ func (C psetCtxt) makeDependencyMapFromRootNode(
 		D[v1][v2] = struct{}{}
 	}
 
-	getPrimitives := func(v ssa.Value, pt *pointer.Result) map[ssa.Value]struct{} {
+	getPrimitives := func(v ssa.Value) map[ssa.Value]struct{} {
 		res := getPrimitives(v, pt)
 		for v := range res {
 			if _, ok := C.valid.Get(v); !ok {
@@ -147,13 +148,13 @@ func (C psetCtxt) makeDependencyMapFromRootNode(
 				}
 			}
 			addBlocking := func(n cfg.Node, v ssa.Value) {
-				for p := range getPrimitives(v, pt) {
+				for p := range getPrimitives(v) {
 					BI[n] = get(n).Add(p)
 					add(n)
 				}
 			}
 			addDependency := func(v ssa.Value) {
-				for p := range getPrimitives(v, pt) {
+				for p := range getPrimitives(v) {
 					if _, ok := D[p]; !ok {
 						D[p] = make(map[ssa.Value]struct{})
 					}
@@ -169,12 +170,12 @@ func (C psetCtxt) makeDependencyMapFromRootNode(
 			// a carrier dependency for x on ch
 			addChanChanDependency := func(ch, x ssa.Value) {
 				if _, ok := x.Type().Underlying().(*T.Chan); ok {
-					for x := range getPrimitives(x, pt) {
+					for x := range getPrimitives(x) {
 						set := utils.MakeSSASet()
 						if prev, ok := C.chanChanDeps[x]; ok {
 							set = prev.Join(set)
 						}
-						for ch := range getPrimitives(ch, pt) {
+						for ch := range getPrimitives(ch) {
 							set = set.Add(ch)
 						}
 
@@ -187,20 +188,20 @@ func (C psetCtxt) makeDependencyMapFromRootNode(
 			case *cfg.SSANode:
 				switch i := n.Instruction().(type) {
 				case *ssa.MakeChan:
-					for p := range getPrimitives(i, pt) {
+					for p := range getPrimitives(i) {
 						if _, ok := D[p]; !ok {
 							D[i] = make(map[ssa.Value]struct{})
 						}
 					}
 				case *ssa.Call:
-					// rcvr, cc := isConcurrentCall(i.Call)
-					// switch cc {
-					// case _BLOCKING_SYNC_CALL:
-					// 	addBlocking(n.CallRelationNode(), rcvr)
-					// 	fallthrough
-					// case _SYNC_CALL:
-					// 	addDependency(rcvr)
-					// }
+					rcvr, cc := isConcurrentCall(i.Call)
+					switch cc {
+					case _BLOCKING_SYNC_CALL:
+						addBlocking(n.CallRelationNode(), rcvr)
+						fallthrough
+					case _SYNC_CALL:
+						addDependency(rcvr)
+					}
 					joinSucc(n.CallRelationNode())
 					return
 				case *ssa.Panic:
@@ -216,14 +217,14 @@ func (C psetCtxt) makeDependencyMapFromRootNode(
 					addChanChanDependency(i.Chan, i.X)
 				}
 			case *cfg.DeferCall:
-				// rcvr, cc := isConcurrentCall(n.Instruction().(*ssa.Defer).Call)
-				// switch cc {
-				// case _BLOCKING_SYNC_CALL:
-				// 	addBlocking(n.CallRelationNode(), rcvr)
-				// 	fallthrough
-				// case _SYNC_CALL:
-				// 	addDependency(rcvr)
-				// }
+				rcvr, cc := isConcurrentCall(n.Instruction().(*ssa.Defer).Call)
+				switch cc {
+				case _BLOCKING_SYNC_CALL:
+					addBlocking(n.CallRelationNode(), rcvr)
+					fallthrough
+				case _SYNC_CALL:
+					addDependency(rcvr)
+				}
 				joinSucc(n.CallRelationNode())
 				return
 			case *cfg.BuiltinCall:
@@ -240,7 +241,7 @@ func (C psetCtxt) makeDependencyMapFromRootNode(
 			case *cfg.Select:
 				prims := utils.MakeSSASet()
 				for _, s := range n.Insn.States {
-					for p := range getPrimitives(s.Chan, pt) {
+					for p := range getPrimitives(s.Chan) {
 						prims = prims.Add(p)
 					}
 				}
@@ -274,10 +275,11 @@ func (C psetCtxt) makeDependencyMapFromRootNode(
 }
 
 type psetConfig struct {
-	CFG          *cfg.Cfg
-	G            graph.Graph[*ssa.Function]
-	entry        cfg.Node
-	chansInScope *utils.SSAValueSet
+	CFG   *cfg.Cfg
+	G     graph.Graph[*ssa.Function]
+	entry cfg.Node
+	// The primitives that should be considered when forming PSets
+	primsInScope *utils.SSAValueSet
 }
 
 func makePSetCtxt(C psetConfig) (ctxt psetCtxt) {
@@ -325,13 +327,15 @@ func makePSetCtxt(C psetConfig) (ctxt psetCtxt) {
 			return
 		case *cfg.SSANode:
 			switch i := n.Instruction().(type) {
-			case *ssa.MakeChan:
-				set = set.Add(i)
 			case *ssa.Call:
 				addCallees()
 				return
 			case *ssa.Go:
 				addCallees()
+			case ssa.Value:
+				if utils.AllocatesConcurrencyPrimitive(i) {
+					set = set.Add(i)
+				}
 			}
 		case *cfg.DeferCall:
 			addCallees()
@@ -345,15 +349,15 @@ func makePSetCtxt(C psetConfig) (ctxt psetCtxt) {
 
 	ctxt.chanChanDeps = make(map[ssa.Value]utils.SSAValueSet)
 	ctxt.valid = set
-	if C.chansInScope != nil {
-		ctxt.valid = ctxt.valid.Meet(*C.chansInScope)
+	if C.primsInScope != nil {
+		ctxt.valid = ctxt.valid.Meet(*C.primsInScope)
 	}
 
 	return
 }
 
 // Get whole program GCatch style P-sets
-func GetInterprocPsets(CFG *cfg.Cfg, pt *pointer.Result, G graph.Graph[*ssa.Function]) PSets {
+func GetInterprocPsets(CFG *cfg.Cfg, pt *u.PointerResult, G graph.Graph[*ssa.Function]) PSets {
 	// Intra-procedural dependency map of channels
 	D := make(map[ssa.Value]map[ssa.Value]struct{})
 
@@ -384,49 +388,48 @@ func GetTotalPset(ps Primitives) (psets PSets) {
 func smallerScope(p1, p2 ssa.Value,
 	computeDominator func(...*ssa.Function) *ssa.Function,
 	CallDAG graph.SCCDecomposition[*ssa.Function],
-	ps Primitives) bool {
+	primsToUses map[ssa.Value]map[*ssa.Function]struct{}) bool {
 
-	p1Funs := []*ssa.Function{}
-	p2Funs := []*ssa.Function{}
-
-	for fun, usageInfo := range ps {
-		if CallDAG.ComponentOf(fun) == -1 {
-			continue
+	uses := func(prim ssa.Value) []*ssa.Function {
+		ret := make([]*ssa.Function, 0, len(primsToUses[prim])+1)
+		// NOTE (Oskar): Including the creator is specified in the paper but new in the implementation.
+		// From testing on etcd it looks like this causes an abort that makes us miss a bug because
+		// the change collapses 3 previous PSets (where only 2 aborted) into one.
+		if CallDAG.ComponentOf(prim.Parent()) == -1 {
+			panic(fmt.Errorf("Pre-condition violated, %v's creator %v is not CallDAG-reachable", prim, prim.Parent()))
 		}
-
-		if usageInfo.HasChan(p1) {
-			p1Funs = append(p1Funs, fun)
+		ret = append(ret, prim.Parent())
+		for fun := range primsToUses[prim] {
+			if CallDAG.ComponentOf(fun) != -1 {
+				ret = append(ret, fun)
+			}
 		}
-		if usageInfo.HasChan(p2) {
-			p2Funs = append(p2Funs, fun)
-		}
+		return ret
 	}
 
-	if len(p1Funs) == 0 || len(p2Funs) == 0 {
-		return false
-	}
-
-	p1Dom := computeDominator(p1Funs...)
-	p2Dom := computeDominator(p2Funs...)
+	p1Dom := computeDominator(uses(p1)...)
+	p2Dom := computeDominator(uses(p2)...)
 
 	// Check if the dominator is in a "smaller" SCC
 	return CallDAG.ComponentOf(p2Dom) <= CallDAG.ComponentOf(p1Dom)
 }
 
-func GetGCatchPSets(CFG *cfg.Cfg, f *ssa.Function, pt *pointer.Result,
+func GetGCatchPSets(CFG *cfg.Cfg, f *ssa.Function, pt *u.PointerResult,
 	G graph.Graph[*ssa.Function],
 	computeDominator func(...*ssa.Function) *ssa.Function,
 	CallDAG graph.SCCDecomposition[*ssa.Function],
-	ps Primitives,
+	primsToUses map[ssa.Value]map[*ssa.Function]struct{},
 ) (psets PSets) {
 	D := make(map[ssa.Value]map[ssa.Value]struct{})
 
 	entry, _ := CFG.FunIO(f)
 
-	chansInScope := new(utils.SSAValueSet)
-	*chansInScope = ps.Chans()
+	primsInScope := utils.MakeSSASet()
+	for prim := range primsToUses {
+		primsInScope = primsInScope.Add(prim)
+	}
 
-	C := makePSetCtxt(psetConfig{CFG, G, entry, chansInScope})
+	C := makePSetCtxt(psetConfig{CFG, G, entry, &primsInScope})
 	C.makeDependencyMapFromRootNode(CFG, entry, D, G, pt)
 
 	PMap := make(map[ssa.Value]*uf.Element)
@@ -469,7 +472,7 @@ func GetGCatchPSets(CFG *cfg.Cfg, f *ssa.Function, pt *pointer.Result,
 			pset := utils.MakeSSASet(p1)
 
 			set.ForEach(func(p2 ssa.Value) {
-				if p1 != p2 && smallerScope(p1, p2, computeDominator, CallDAG, ps) {
+				if p1 != p2 && smallerScope(p1, p2, computeDominator, CallDAG, primsToUses) {
 					pset = pset.Add(p2)
 				}
 			})

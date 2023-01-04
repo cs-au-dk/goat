@@ -1,0 +1,15 @@
+# Inter-processual charges description
+
+name: ThreadCharges
+informal-lattice: lattice of inter-processual thread charges
+description: |
+  is a member of the inter-processual thread charge lattice, binding
+  abstract goroutine identifiers to charges.
+description-lattice: |
+  is the lattice of inter-processual thread charges, encompassing all possible bindings
+  from abstract goroutine identifiers to charges.
+informal: inter-processual thread charges
+key: defs.Goro
+informal-key: abstract goroutine
+value: Charges
+informal-value: thread charges

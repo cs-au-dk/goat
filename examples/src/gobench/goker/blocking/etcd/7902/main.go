@@ -46,7 +46,7 @@ func runElectionFunc() {
 				close(nextc)
 				nextc = make(chan bool)
 			}
-			<-rcNextc // Followers is blocking here
+			<-rcNextc // Followers is blocking here //@ blocks, fn
 		}
 	}
 	doRounds(rcs, 100)

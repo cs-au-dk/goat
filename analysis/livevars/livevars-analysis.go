@@ -5,11 +5,11 @@ import (
 
 	"github.com/cs-au-dk/goat/analysis/cfg"
 	L "github.com/cs-au-dk/goat/analysis/lattice"
+	u "github.com/cs-au-dk/goat/analysis/upfront"
 	"github.com/cs-au-dk/goat/utils"
 	"github.com/cs-au-dk/goat/utils/worklist"
 
 	"github.com/benbjohnson/immutable"
-	"golang.org/x/tools/go/pointer"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -46,7 +46,7 @@ func findExits(n cfg.Node) (exits map[cfg.Node]bool) {
 	return
 }
 
-func LiveVars(G cfg.Cfg, pt *pointer.Result) *immutable.Map[cfg.Node, L.Element] {
+func LiveVars(G cfg.Cfg, pt *u.PointerResult) *immutable.Map[cfg.Node, L.Element] {
 	log.Println("Starting channel liveness analysis...")
 
 	getAllMakeChans(G)

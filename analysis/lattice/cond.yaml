@@ -1,0 +1,13 @@
+# Cond description.
+
+name: Cond
+description: is a member of the lattice of abstract conditional variables.
+informal: abstract conditional variable
+lattice: lattice of read-write mutex values
+fields:
+  - accessor: Locker
+    typename: Element
+    typecast: Element
+    stringname: Locker
+    getcomment: retrieves the potential Lockers attached to the abstract conditional variable.
+    setcomment: updates the the set of Lockers attached to the abstract conditional variable.

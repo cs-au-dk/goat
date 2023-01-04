@@ -14,7 +14,7 @@ import (
 	"github.com/cs-au-dk/goat/utils/dot"
 )
 
-// Construct a dot graphed based on the superlocation graph
+// Visualize constructs a dot graphed based on the superlocation graph
 func (SG SuperlocGraph) Visualize(blocks Blocks) {
 	htoa := func(hash uint32) string {
 		return strconv.FormatUint(uint64(hash), 10)
@@ -25,7 +25,6 @@ func (SG SuperlocGraph) Visualize(blocks Blocks) {
 			"minlen":  fmt.Sprint(opts.Minlen()),
 			"nodesep": fmt.Sprint(opts.Nodesep()),
 			"rankdir": "TB",
-			// "label":   "Futures for thread " + s0.Target.String(),
 			// Necessary to ensure that ordering within clusters is kept.
 			// See https://stackoverflow.com/questions/33959969/order-cluster-nodes-in-graphviz
 			"remincross": "false",
@@ -56,13 +55,9 @@ func (SG SuperlocGraph) Visualize(blocks Blocks) {
 			return
 		}
 
-		// Choose a different bgcolor if the target thread has progressed
 		bgcolor := "#FFD581"
-		// if s.Threads().GetUnsafe(s.Target) != s0.Threads().GetUnsafe(s.Target) {
-		// 	bgcolor = "#00e544"
-		// }
 		if len(s.Successors) == 0 {
-			_, _, blocking := s.superloc.Find(func(g defs.Goro, cl defs.CtrLoc) bool {
+			_, _, blocking := s.Find(func(g defs.Goro, cl defs.CtrLoc) bool {
 				_, ok := cl.Node().(*cfg.TerminateGoro)
 				return !ok
 			})
@@ -83,7 +78,7 @@ func (SG SuperlocGraph) Visualize(blocks Blocks) {
 
 		// Ensure consistent ordering in cluster by sorting by thread ID
 		gs := make(map[uint32]defs.Goro)
-		itids := make([]int, 0, s.Threads().Size())
+		itids := make([]int, 0, s.Size())
 		s.ForEach(func(g defs.Goro, _ defs.CtrLoc) {
 			gs[g.Hash()] = g
 			itids = append(itids, (int)(g.Hash()))
@@ -98,11 +93,8 @@ func (SG SuperlocGraph) Visualize(blocks Blocks) {
 
 		var prevNode *dot.DotNode = nil
 		for _, tid := range tids {
-			// if g == s0.Target {
-			// 	continue
-			// }
 			g := gs[tid]
-			loc, _ := s.Threads().Get(g)
+			loc, _ := s.Get(g)
 			threadNode := &dot.DotNode{
 				ID: htoa(s.Hash()) + ":" + htoa(g.Hash()),
 				Attrs: dot.DotAttrs{
@@ -139,21 +131,6 @@ func (SG SuperlocGraph) Visualize(blocks Blocks) {
 		G.Clusters = append(G.Clusters, configurationToCluster[s].Cluster)
 		queue = append(queue, s)
 	}
-
-	// targetCluster := &dot.DotCluster{
-	// 	ID: "Target operation",
-	// 	Nodes: []*dot.DotNode{{
-	// 		ID: s0.Target.String() + ":start",
-	// 		Attrs: dot.DotAttrs{
-	// 			"fillcolor": "#99d7f7",
-	// 			"label":     s0.Threads().GetUnsafe(s0.Target).Node().String(),
-	// 		},
-	// 	}},
-	// 	Attrs: dot.DotAttrs{
-	// 		"label":   "Target operation on thread " + s0.Target.String(),
-	// 		"bgcolor": "#AAF7FF",
-	// 	},
-	// }
 
 	G.Clusters = []*dot.DotCluster{}
 	addConfigurationCluster(s0)

@@ -15,6 +15,7 @@ type Func struct {
 	outflowChans map[ssa.Value]struct{}
 	usedChans    map[ssa.Value]struct{}
 	usedSync     map[ssa.Value]struct{}
+	outflowSync  map[ssa.Value]struct{}
 }
 
 func (f *Func) init() {
@@ -23,11 +24,16 @@ func (f *Func) init() {
 	f.outflowChans = make(map[ssa.Value]struct{})
 	f.createdChans = make(map[ssa.Value]struct{})
 	f.usedSync = make(map[ssa.Value]struct{})
+	f.outflowSync = make(map[ssa.Value]struct{})
 }
 
 func (f *Func) String() (str string) {
-	if len(f.usedChans) > 0 {
-		str += colorize.ChanSet("Used channels") + ": {"
+	p := func(header string, m map[ssa.Value]struct{}) string {
+		if len(m) == 0 {
+			return ""
+		}
+
+		str := colorize.ChanSet(header) + ": {"
 		strs := []string{}
 		for ch := range f.usedChans {
 			strs = append(strs, colorize.Chan(ch.Name()+" = "+ch.String()))
@@ -35,49 +41,14 @@ func (f *Func) String() (str string) {
 
 		str += strings.Join(strs, ", ")
 		str += "}\n"
+		return str
 	}
-	if len(f.createdChans) > 0 {
-		str += colorize.ChanSet("Created channels") + ": {"
-		strs := []string{}
-		for ch := range f.createdChans {
-			strs = append(strs, colorize.Chan(ch.Name()+" = "+ch.String()))
-		}
-
-		str += strings.Join(strs, ", ")
-		str += "}\n"
-	}
-	if len(f.inflowChans) > 0 {
-		str += colorize.ChanSet("In-flowing channels") + ": {"
-		strs := []string{}
-		for ch := range f.inflowChans {
-			strs = append(strs, colorize.Chan(ch.Name()+" = "+ch.String()))
-		}
-
-		str += strings.Join(strs, ", ")
-		str += "}\n"
-	}
-	if len(f.outflowChans) > 0 {
-		str += colorize.ChanSet("Out-flowing channels") + ": {"
-		strs := []string{}
-		for ch := range f.outflowChans {
-			strs = append(strs, colorize.Chan(ch.Name()+" = "+ch.String()))
-		}
-
-		str += strings.Join(strs, ", ")
-		str += "}\n"
-	}
-	if len(f.usedSync) > 0 {
-		str += colorize.SyncSet("Used sync") + ": {"
-
-		strs := []string{}
-		for s := range f.usedSync {
-			strs = append(strs, colorize.Chan(s))
-		}
-
-		str += strings.Join(strs, ", ") + "}\n"
-	}
-
-	return
+	return p("Used channels", f.usedChans) +
+		p("Created channels", f.createdChans) +
+		p("In-flowing channels", f.inflowChans) +
+		p("Out-flowing channels", f.outflowChans) +
+		p("Used sync", f.usedSync) +
+		p("Out-flowing sync", f.outflowSync)
 }
 
 func newFunc() (f *Func) {
@@ -114,8 +85,16 @@ func (f *Func) AddUseSync(v ssa.Value) {
 	f.usedSync[v] = struct{}{}
 }
 
+func (f *Func) AddOutSync(v ssa.Value) {
+	f.outflowSync[v] = struct{}{}
+}
+
 func (f *Func) Sync() map[ssa.Value]struct{} {
 	return f.usedSync
+}
+
+func (f *Func) OutSync() map[ssa.Value]struct{} {
+	return f.outflowSync
 }
 
 func (f *Func) IsActive(v ssa.Value) bool {

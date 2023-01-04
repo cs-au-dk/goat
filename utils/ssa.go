@@ -4,16 +4,13 @@ import (
 	"fmt"
 	"go/token"
 	"go/types"
-	"sort"
-	"strings"
 
-	"github.com/benbjohnson/immutable"
 	"golang.org/x/tools/go/pointer"
 
 	"golang.org/x/tools/go/ssa"
 )
 
-// Returns the first instruction in block-instruction order that matches the predicate.
+// FindSSAInstruction returns the first instruction in block-instruction order that matches the predicate.
 func FindSSAInstruction(fun *ssa.Function, pred func(ssa.Instruction) bool) (ssa.Instruction, bool) {
 	for _, block := range fun.Blocks {
 		for _, insn := range block.Instrs {
@@ -25,7 +22,10 @@ func FindSSAInstruction(fun *ssa.Function, pred func(ssa.Instruction) bool) (ssa
 	return nil, false
 }
 
-func ValIsInPkg(val ssa.Value, pkg string) bool {
+// ValInPkg checks whether an SSA value is included in a given package.
+// If the value is a function, it checks the name of the package.
+// If the value is not a function, it checks the name of the package of its parent function.
+func ValInPkg(val ssa.Value, pkg string) bool {
 	switch val := val.(type) {
 	case *ssa.Function:
 		return val.Pkg.Pkg.Name() == pkg
@@ -34,40 +34,104 @@ func ValIsInPkg(val ssa.Value, pkg string) bool {
 	}
 }
 
-func IsNamedType(typ types.Type, pkg string, name string) bool {
-	checkNamedType := func(typ types.Type) bool {
-		switch typ := typ.(type) {
-		case *types.Named:
-			if typ.Obj() == nil {
-				return false
-			}
-			if typ.Obj().Pkg() == nil {
-				return false
-			}
-			return !typ.Obj().IsAlias() &&
-				typ.Obj().Pkg().Name() == pkg &&
-				typ.Obj().Name() == name
-		}
-
-		return false
-	}
-
+// IsNamedTypeStrict checks whether the given type is the specifed named type.
+// Specifically, it checks that the type is a non-aliased named type, and that its package
+// name matches the "pkg" parameter, and its name matches the "name" parameter.
+func IsNamedTypeStrict(typ types.Type, pkg, name string) bool {
 	switch typ := typ.(type) {
 	case *types.Named:
-		return checkNamedType(typ)
+		if typ.Obj() == nil {
+			return false
+		}
+		if typ.Obj().Pkg() == nil {
+			return false
+		}
+		return !typ.Obj().IsAlias() &&
+			typ.Obj().Pkg().Name() == pkg &&
+			typ.Obj().Name() == name
+	}
+
+	return false
+}
+
+// IsNamedType returns whether the given type is the specifed named type or the type of
+// pointer to the given named type (not recursively).
+func IsNamedType(typ types.Type, pkg string, name string) bool {
+	switch typ := typ.(type) {
+	case *types.Named:
+		return IsNamedTypeStrict(typ, pkg, name)
 	case *types.Pointer:
-		return checkNamedType(typ.Elem())
+		return IsNamedTypeStrict(typ.Elem(), pkg, name)
 	}
 	return false
 }
 
+// IsModelledConcurrentAPIType checks that a named type is one of
+// sync.Mutex, sync.RWMutex or sync.Cond, optionally wrapped in a pointer.
 func IsModelledConcurrentAPIType(typ types.Type) bool {
-	return IsNamedType(typ, "sync", "Mutex") ||
-		IsNamedType(typ, "sync", "RWMutex") ||
-		IsNamedType(typ, "sync", "Cond")
+	ptr, ok := typ.(*types.Pointer)
+	return IsModelledConcurrentAPITypeStrict(typ) ||
+		(ok && IsModelledConcurrentAPITypeStrict(ptr.Elem()))
 }
 
+// IsModelledConcurrentAPITypeStrict checks that a named type is strictly one of
+// sync.Mutex, sync.RWMutex or sync.Cond, not wrapped in a pointer.
+func IsModelledConcurrentAPITypeStrict(typ types.Type) bool {
+	return IsNamedTypeStrict(typ, "sync", "Mutex") ||
+		IsNamedTypeStrict(typ, "sync", "RWMutex") ||
+		IsNamedTypeStrict(typ, "sync", "Cond") ||
+		IsNamedTypeStrict(typ, "sync", "WaitGroup")
+}
+
+// TypeEmbedsConcurrencyPrimitive checks whether the allocation of an object
+// of type embeds by value at least one concurrency primitive.
+// This is axiomatically true for standard library concurrency primitive types,
+// and extends to types embedding concurrency primitive types without indirection.
+func TypeEmbedsConcurrencyPrimitive(typ types.Type) bool {
+	switch {
+	case IsModelledConcurrentAPITypeStrict(typ):
+		// Any standard library concurrency primitive type "embeds" itself.
+		return true
+	case IsNamedTypeStrict(typ, "sync", "Once"):
+		// TODO: The sync.Once struct embeds a mutex. We don't want to treat
+		// that as a mutex primitive.
+		return false
+	}
+
+	switch typ := typ.Underlying().(type) {
+	case *types.Struct:
+		// For struct types, recursively check each field.
+		for i := 0; i < typ.NumFields(); i++ {
+			if TypeEmbedsConcurrencyPrimitive(typ.Field(i).Type()) {
+				return true
+			}
+		}
+	case *types.Array:
+		// For array types, recursively check the element type.
+		return TypeEmbedsConcurrencyPrimitive(typ.Elem())
+	}
+
+	// Otherwise, the type does not embed concurrency primitives.
+	return false
+}
+
+func AllocatesConcurrencyPrimitive(v ssa.Value) bool {
+	switch v := v.(type) {
+	case *ssa.MakeChan:
+		return true
+	case *ssa.Alloc:
+		return TypeEmbedsConcurrencyPrimitive(v.Type().Underlying().(*types.Pointer).Elem())
+	case *ssa.MakeSlice:
+		return TypeEmbedsConcurrencyPrimitive(v.Type().Underlying().(*types.Slice).Elem())
+	default:
+		return false
+	}
+}
+
+// ValHasConcurrencyPrimitive checks whether a value may point to a concurrency primitive,
+// given the points-to information.
 func ValHasConcurrencyPrimitives(v ssa.Value, pt *pointer.Result) bool {
+	// If the underlying type is an interface, then check
 	if _, ok := v.Type().Underlying().(*types.Interface); !ok {
 		return TypeHasConcurrencyPrimitives(v.Type(), make(map[types.Type]struct{}))
 	}
@@ -95,34 +159,29 @@ func ValHasConcurrencyPrimitives(v ssa.Value, pt *pointer.Result) bool {
 	return false
 }
 
-// func ValMayInvolveConcurrency(pt *pointer.Result, v ssa.Value) bool {
-// 	switch t := v.Type() {
-// 	}
-
-// }
-
+// TypeHasPointerLikes checks whether a given type is pointer-like,
+// or is composed of pointer-like types.
 func TypeHasPointerLikes(typ types.Type) bool {
 	switch typ := typ.(type) {
+	case *types.Array,
+		*types.Chan,
+		*types.Interface,
+		*types.Map,
+		*types.Pointer,
+		*types.Slice:
+		// Arrays, channels, interfaces, maps, pointers and slices
+		// are pointer-like by definition.
+		return true
 	case *types.Named:
+		// A named type is pointer-like, if its underlying type is pointer-like.
 		return TypeHasPointerLikes(typ.Underlying())
-	case *types.Array:
-		return true
-	case *types.Chan:
-		return true
-	case *types.Interface:
-		return true
-	case *types.Map:
-		return true
-	case *types.Pointer:
-		return true
 	// Functions are not considered pointer-like because
 	// the only relevance is w.r.t the control flow graph.
 	// TODO: Flow-sensitivity when taking function successors can help
 	// cut down on function successor steppings.
 	case *types.Signature:
+		// Functions are pointer-like, but we treat them differently.
 		return false
-	case *types.Slice:
-		return true
 	case *types.Struct:
 		for i := 0; i < typ.NumFields(); i++ {
 			styp := typ.Field(i).Type()
@@ -148,13 +207,11 @@ func ValHasPointerLikes(v ssa.Value) bool {
 
 func TypeHasConcurrencyPrimitives(typ types.Type, visited map[types.Type]struct{}) bool {
 	switch {
-	case IsNamedType(typ, "sync", "Cond"):
-		return true
-	case IsNamedType(typ, "sync", "Mutex"):
-		return true
-	case IsNamedType(typ, "sync", "Locker"):
-		return true
-	case IsNamedType(typ, "sync", "RWMutex"):
+	case IsNamedType(typ, "sync", "Cond"),
+		IsNamedType(typ, "sync", "Mutex"),
+		IsNamedType(typ, "sync", "Locker"),
+		IsNamedType(typ, "sync", "RWMutex"),
+		IsNamedType(typ, "sync", "WaitGroup"):
 		return true
 	}
 
@@ -196,158 +253,6 @@ func TypeHasConcurrencyPrimitives(typ types.Type, visited map[types.Type]struct{
 	}
 	return false
 }
-
-type SSAValueSet struct {
-	*immutable.Map[ssa.Value, struct{}]
-}
-
-func (s SSAValueSet) Size() int {
-	return s.Map.Len()
-}
-
-func MakeSSASet(vs ...ssa.Value) SSAValueSet {
-	mp := immutable.NewMap[ssa.Value, struct{}](PointerHasher[ssa.Value]{})
-	for _, v := range vs {
-		mp = mp.Set(v, struct{}{})
-	}
-
-	return SSAValueSet{mp}
-}
-
-func (s SSAValueSet) Add(v ssa.Value) SSAValueSet {
-	return SSAValueSet{s.Map.Set(v, struct{}{})}
-}
-
-func (s1 SSAValueSet) Join(s2 SSAValueSet) SSAValueSet {
-	if s1 == s2 {
-		return s1
-	} else if s2.Size() < s1.Size() {
-		s1, s2 = s2, s1
-	}
-
-	for iter := s1.Iterator(); !iter.Done(); {
-		v, _, _ := iter.Next()
-		if !s2.Contains(v) {
-			s2.Map = s2.Map.Set(v, struct{}{})
-		}
-	}
-
-	return s2
-}
-
-func (s SSAValueSet) Contains(v ssa.Value) bool {
-	_, ok := s.Get(v)
-	return ok
-}
-
-func (s1 SSAValueSet) Meet(s2 SSAValueSet) SSAValueSet {
-	if s1 == s2 {
-		return s1
-	}
-
-	vs := make([]ssa.Value, 0, s1.Size())
-
-	s1.ForEach(func(v ssa.Value) {
-		if s2.Contains(v) {
-			vs = append(vs, v)
-		}
-	})
-
-	return MakeSSASet(vs...)
-}
-
-func (s SSAValueSet) ForEach(do func(ssa.Value)) {
-	for iter := s.Iterator(); !iter.Done(); {
-		next, _, _ := iter.Next()
-		do(next)
-	}
-}
-
-func (s SSAValueSet) Entries() []ssa.Value {
-	vs := make([]ssa.Value, 0, s.Size())
-
-	s.ForEach(func(v ssa.Value) {
-		vs = append(vs, v)
-	})
-	return vs
-}
-
-func (s SSAValueSet) Empty() bool {
-	return s.Map == nil || s.Map.Len() == 0
-}
-
-func (s SSAValueSet) String() string {
-	vs := s.Entries()
-
-	// Ensure consistent ordering
-	sortingKey := func(v ssa.Value) string {
-		res := v.Name() + v.String()
-		if f := v.Parent(); f != nil {
-			res += f.Prog.Fset.Position(v.Pos()).String()
-		}
-		return res
-	}
-	sort.Slice(vs, func(i, j int) bool {
-		return sortingKey(vs[i]) < sortingKey(vs[j])
-	})
-
-	strs := make([]string, s.Size())
-
-	for i, v := range vs {
-		str := v.Name() + " = " + v.String()
-		if f := v.Parent(); f != nil {
-			str += fmt.Sprintf(" at %v (%v)", f.Prog.Fset.Position(v.Pos()), f)
-		}
-		strs[i] = str
-	}
-
-	return "{ " + strings.Join(strs, "\n") + " }"
-}
-
-type ssaValueSetHasher struct{}
-
-func (ssaValueSetHasher) Hash(s SSAValueSet) uint32 {
-	vs := make([]ssa.Value, 0, s.Size())
-	s.ForEach(func(v ssa.Value) {
-		vs = append(vs, v)
-	})
-	// Ensure consistent ordering (NOTE: This only works for singleton P-Sets)
-	sortingKey := func(v ssa.Value) string {
-		if f := v.Parent(); f != nil {
-			prog := f.Prog
-			return fmt.Sprintf("%s%s%s", v.Name(), v.String(), prog.Fset.Position(v.Pos()))
-		}
-		return fmt.Sprintf("%s%s%p", v.Name(), v.String(), v)
-	}
-
-	sort.Slice(vs, func(i, j int) bool {
-		return sortingKey(vs[i]) < sortingKey(vs[j])
-	})
-
-	hashes := make([]uint32, 0, s.Size())
-	for _, v := range vs {
-		hashes = append(hashes, PointerHasher[ssa.Value]{}.Hash(v))
-	}
-
-	return HashCombine(hashes...)
-}
-
-func (ssaValueSetHasher) Equal(a, b SSAValueSet) bool {
-	if a == b {
-		return true
-	} else if a.Size() != b.Size() {
-		return false
-	}
-
-	for it := a.Map.Iterator(); !it.Done(); {
-		if k, _, _ := it.Next(); !b.Contains(k) {
-			return false
-		}
-	}
-	return true
-}
-
-var SSAValueSetHasher immutable.Hasher[SSAValueSet] = ssaValueSetHasher{}
 
 func PrintSSAFun(fun *ssa.Function) {
 	fmt.Println(fun.Name())

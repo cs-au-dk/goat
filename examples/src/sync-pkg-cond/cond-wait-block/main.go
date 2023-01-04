@@ -8,5 +8,5 @@ func main() {
 	}
 
 	c.L.Lock()
-	c.Wait()
+	c.Wait() //@ blocks
 }

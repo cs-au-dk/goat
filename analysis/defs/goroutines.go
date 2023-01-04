@@ -8,56 +8,79 @@ import (
 	"github.com/benbjohnson/immutable"
 )
 
+// Goro represents abstract threads.
 type Goro interface {
+	String() string
+
+	// Hash computes the 32-bit hash of a given goroutine.
 	Hash() uint32
+
+	// Equal compares strict equality between goroutines.
 	Equal(Goro) bool
-	// Like equal but disregards indexes
+	// WeakEqual compares for equality between goroutines, disregarding indexes
 	WeakEqual(Goro) bool
 
-	String() string
-	// Goroutines use control locations as part of their identification.
+	// CtrLoc retrieves the control location used to spawn a goroutine. Control locations are used as part of goroutine identification.
 	CtrLoc() CtrLoc
+	// Index retrieves the index of a goroutine, denoting how many identical goroutines were created beforehand.
 	Index() int
+	// Parent retrieves the parent goroutine that spawned the current goroutine.
 	Parent() Goro
+	// Root retrieves the main goroutine, from which all other goroutines are transitively spawned.
 	Root() Goro
-	// Spawns a goroutine off the current goroutine at the provided control location
+	// Spawn constructs a goroutine spawned from the current goroutine at the provided control location
 	Spawn(CtrLoc) Goro
-	// Spawns an indexed goroutine off the current goroutine at the provided control location.
+	// SpawnIndexed constructs an indexed goroutine spawned from the current goroutine at the provided control location.
 	SpawnIndexed(CtrLoc, int) Goro
-	// Sets the index
+	// SetIndex constructs a goroutine from the given goroutine, with the given index.
 	SetIndex(int) Goro
+	// IsRoot checks whether the given goroutine is the main goroutine.
 	IsRoot() bool
 
+	// IsChildOf checks whether the given goroutine is the child of the current goroutine.
 	IsChildOf(Goro) bool
+	// IsChildOf checks whether the given goroutine is the parent of the current goroutine.
 	IsParentOf(Goro) bool
 
-	// Returns true if the control location spawn point chain has a cycle.
+	// IsCircular is  true if the control location spawn point chain has a cycle.
 	IsCircular() bool
-	// Get the parent goroutine with the longest chain of non-repeating control
+	// GetRadix computes the parent goroutine with the longest chain of non-repeating control
 	// location spawning points.
 	GetRadix() Goro
+
 	// Returns the length of the go-string.
 	Length() int
 }
 
-type goro struct {
-	cl     CtrLoc
-	parent Goro
-	index  int
-}
+type (
+	// goro is a known abstract thread. It is used for threads that belong to the given fragment.
+	goro struct {
+		cl     CtrLoc
+		parent Goro
+		index  int
+	}
 
+	// topGoro is an unknown abstract thread. It is used to encode heap locations
+	// outside the fragment.
+	topGoro struct{}
+)
+
+// Goro creates an abstract goroutine from the given control location, and parent goroutine.
 func (factory) Goro(cl CtrLoc, parent Goro) Goro {
 	return goro{cl, parent, 0}
 }
 
+// RootGoro creates an abstract goroutine denoting the main thread.
 func (factory) RootGoro(cl CtrLoc) Goro {
 	return goro{cl, nil, 0}
 }
 
+// IndexedGoro creates an abstract goroutine with the given index.
 func (factory) IndexedGoro(cl CtrLoc, parent Goro, index int) Goro {
 	return goro{cl, parent, index}
 }
 
+// Hash computes the 32-bit hash of a given goroutine.
 func (g goro) Hash() (res uint32) {
 	if g.parent == nil {
 		res = g.cl.Hash()
@@ -77,6 +100,7 @@ func (g goro) Hash() (res uint32) {
 	return res
 }
 
+// CtrLoc retrieves the control location of a goroutine.
 func (g goro) CtrLoc() CtrLoc {
 	return g.cl
 }
@@ -184,8 +208,6 @@ func (g goro) Root() Goro {
 	}
 	return g.parent.Root()
 }
-
-type topGoro struct{}
 
 func (factory) TopGoro() Goro {
 	return topGoro{}

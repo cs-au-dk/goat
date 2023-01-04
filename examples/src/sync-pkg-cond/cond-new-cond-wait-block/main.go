@@ -6,10 +6,10 @@ func main() {
 	c := sync.NewCond(&sync.Mutex{})
 
 	go func() {
-		c.L.Lock()
-		c.Wait()
+		c.L.Lock() //@ releases
+		c.Wait() //@ blocks
 	}()
 
-	c.L.Lock()
-	c.Wait()
+	c.L.Lock() //@ releases
+	c.Wait() //@ blocks
 }

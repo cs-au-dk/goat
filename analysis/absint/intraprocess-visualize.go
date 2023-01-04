@@ -136,7 +136,7 @@ func StringifyNodeArguments(g defs.Goro, mem L.Memory, node cfg.Node) (label str
 					}
 				}()
 
-				ssaString := evaluateSSA(g, mem, op).String()
+				ssaString := EvaluateSSA(g, mem, op).String()
 				if l := len(ssaString); l > StringifyLimit {
 					ssaString = ssaString[:StringifyLimit-6] + " ... " + ssaString[l-1:]
 				}

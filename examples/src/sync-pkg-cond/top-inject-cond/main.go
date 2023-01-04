@@ -9,7 +9,7 @@ func main() {
 	cond := sync.NewCond(&mu)
 
 	go func() {
-		mu.Lock() //@ releases, fp
+		mu.Lock() //@ releases
 		defer mu.Unlock()
 	}()
 

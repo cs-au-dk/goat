@@ -106,6 +106,39 @@ func (a AnnReleases) Nodes() map[cfg.Node]struct{} {
 	return commNodes(a.basicAnnotation)
 }
 
+type AnnNoDataflow struct {
+	basicAnnotation
+	goro    string
+	goroann *AnnGoro
+}
+
+func (a AnnNoDataflow) String() string {
+	fset := a.mgr.loadRes.Prog.Fset
+	npos := fset.Position(a.note.Pos)
+	return At(id_NO_DATAFLOW + " at " + npos.String())
+}
+
+func (a AnnNoDataflow) HasFocus() bool {
+	return a.goro != ""
+}
+
+func (a AnnNoDataflow) Focused() AnnGoro {
+	if a.goroann == nil {
+		a.goroann = new(AnnGoro)
+		*a.goroann = a.mgr.FindGoro(a.goro)
+	}
+	return *a.goroann
+}
+
+func (a AnnNoDataflow) Nodes() map[cfg.Node]struct{} {
+	return commNodes(a.basicAnnotation)
+}
+
+type AnnPSet struct {
+	basicAnnotation
+	val ssa.Value
+}
+
 type AnnChan struct {
 	basicAnnotation
 	ch ssa.Value
@@ -147,6 +180,10 @@ func commNodes(a Annotation) map[cfg.Node]struct{} {
 	}
 
 	return commsuccs
+}
+
+func (a AnnPSet) Value() ssa.Value {
+	return a.val
 }
 
 func (a AnnChan) Nodes() map[cfg.Node]struct{} {

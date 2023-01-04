@@ -8,8 +8,10 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-var LocalPkgs map[*ssa.Package]bool
+// LocalPkgs is a collection of packages deemed local.
+var LocalPkgs map[*ssa.Package]struct{}
 
+// pkgQualifiedPath
 func pkgQualifiedPath(pkg *ssa.Package) []string {
 	path := strings.Split(strings.TrimSuffix(pkg.Pkg.Path(), ".test"), "/")
 
@@ -20,17 +22,17 @@ func pkgQualifiedPath(pkg *ssa.Package) []string {
 	return path
 }
 
-/** GetLocalPackages */
+// GetLocalPackages populates the LocalPkgs set with local packages, given
+// main entry points and packages.
 func GetLocalPackages(mains []*ssa.Package, pkgs []*ssa.Package) (err error) {
 	if len(mains) == 0 {
 		return errors.New("gather local packages error: no main packages found")
 	}
 
-	LocalPkgs = make(map[*ssa.Package]bool)
+	LocalPkgs = make(map[*ssa.Package]struct{})
 	mp := GetMain(mains)
 	if mp == nil {
-		// If there is no non-test main package, just pick one of the test
-		// packages.
+		// If there is no non-test main package, pick one of the test packages.
 		mp = mains[0]
 	}
 
@@ -43,7 +45,7 @@ func GetLocalPackages(mains []*ssa.Package, pkgs []*ssa.Package) (err error) {
 			isLocal = isLocal && mainpath[i] == pkgpath[i]
 		}
 		if isLocal {
-			LocalPkgs[p] = true
+			LocalPkgs[p] = struct{}{}
 		}
 	}
 

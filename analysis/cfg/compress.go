@@ -1,10 +1,12 @@
 package cfg
 
+// removeSuccessor severs the successor relation between nodes `from` and `to`.
 func removeSuccessor(from Node, to Node) {
 	from.removeSuccessor(to)
 	to.removePredecessor(from)
 }
 
+// removeNode excises a node and all of its edges from the CFG.
 func (cfg *Cfg) removeNode(node Node) {
 	for pred := range node.Predecessors() {
 		removeSuccessor(pred, node)
@@ -21,9 +23,8 @@ func (cfg *Cfg) removeNode(node Node) {
 	fun := node.Function()
 	delete(cfg.funs[fun].nodes, node)
 
-	// If the node being removed has a defer link,
-	// and that node's defer link is still the removed node,
-	// then set it to nil instead.
+	// If the node being removed has a defer link, and that node's defer link
+	// is still the removed node, then set it to nil instead.
 	if dfr := node.DeferLink(); dfr != nil {
 		if dfr.DeferLink() == node {
 			dfr.addDeferLink(nil)
@@ -41,6 +42,8 @@ func (cfg *Cfg) removeNode(node Node) {
 	}
 }
 
+// compress rewires a CFG by removing helper nodes that do not impact the semantics,
+// and transitively rewiring the remaining nodes in the CFG.
 func compress(cfg *Cfg) {
 	deferBookkeeping := make(map[Node]map[Node]struct{})
 
@@ -64,6 +67,8 @@ func compress(cfg *Cfg) {
 		}
 	}
 
+	// compress further checks the compression viability of a candidate CF-node, and executes
+	// the compression if viable.
 	compress := func(node Node) {
 		switch {
 		case len(node.Successors()) == 0:
@@ -150,31 +155,29 @@ func compress(cfg *Cfg) {
 		if settled, ok := visited[node]; !settled || !ok {
 			visited[node] = true
 
-			switch node := node.(type) {
-			case *BlockEntry:
-				compress(node)
-			case *BlockExitDefer:
-				compress(node)
-			case *SelectDefer:
-				compress(node)
-			case *BlockExit:
-				compress(node)
-			case *BlockEntryDefer:
+			// The following node types are only used during CFG construction
+			// are compression candidates.
+			switch node.(type) {
+			case *BlockEntry,
+				*BlockExitDefer,
+				*SelectDefer,
+				*BlockExit,
+				*BlockEntryDefer:
 				compress(node)
 			}
 
 			// Due to being reachable, continuation and spawn nodes
 			// may be added to the queue.
-			for succ := range node.Continuations() {
-				queue = append(queue, succ)
-			}
 			for spawn := range node.Spawns() {
 				queue = append(queue, spawn)
+			}
+			for succ := range node.Continuations() {
+				queue = append(queue, succ)
 			}
 		}
 	}
 
-	// Discard unreachable CFG nodes.
+	// Discard now-unreachable CFG nodes.
 	for insNode := range cfg.nodeToInsn {
 		if _, ok := visited[insNode]; !ok {
 			cfg.removeNode(insNode)
@@ -193,8 +196,6 @@ func compress(cfg *Cfg) {
 			_, ok = cfg.nodeToInsn[n]
 		case AnySynthetic:
 			_, ok = cfg.synthetics[n.Id()]
-		default:
-			panic("???")
 		}
 		return ok
 	}
@@ -213,7 +214,7 @@ func compress(cfg *Cfg) {
 			// If the panic continuation was visited, no action
 			// must be taken
 			if !exists(pnc) {
-				// Othwerise, search for the function exit node and wire it
+				// Otherwise, search for the function exit node and wire it
 				setPanicCont(insNode, cfg.funs[insNode.Function()].exit)
 			}
 		}

@@ -27,32 +27,27 @@ func represents(l1 loc.AddressableLocation, l2 loc.Location) bool {
 	}
 }
 
-// Checks whether a location is a top location.
-// This is the case for local locations, or for
-// allocation sites where the owning goroutine is
-// the top goroutine
+// IsTopLocation checks whether a location is an unkown location. This is the case for
+// local or allocation site locations where the owning goroutine is unkown.
 func IsTopLocation(l loc.Location) bool {
 	switch l := l.(type) {
-	case loc.GlobalLocation:
-		return false
-	case loc.LocalLocation:
+	case loc.GlobalLocation,
+		loc.LocalLocation,
+		loc.NilLocation,
+		loc.FunctionPointer:
 		return false
 	case loc.AllocationSiteLocation:
 		g := l.Goro.(defs.Goro)
 		return defs.Create().TopGoro().Equal(g)
-	case loc.NilLocation:
-		return false
 	case loc.FieldLocation:
+		// A field location is the top location if its base is the top location.
 		return IsTopLocation(l.Base)
-	case loc.FunctionPointer:
-		return false
 	default:
 		panic(fmt.Sprintf("Location %s cannot be checked for top", l))
 	}
 }
 
-// Produces a representative location for the given location if it is an
-// allocation site location and it isn't already a top location.
+// representative produces a representative unknown location from an allocation site location.
 func representative(l loc.AddressableLocation) (loc.AllocationSiteLocation, bool) {
 	switch l := l.(type) {
 	case loc.AllocationSiteLocation:
@@ -71,14 +66,11 @@ func representative(l loc.AddressableLocation) (loc.AllocationSiteLocation, bool
 	}
 }
 
+// recRepresentative recursively ceates a representative unknown location for any
+// type of location.
 func recRepresentative(l loc.Location) (loc.Location, bool) {
 	switch l := l.(type) {
 	case loc.FieldLocation:
-		if rep, hasRep := recRepresentative(l.Base); hasRep {
-			l.Base = rep
-			return l, true
-		}
-	case loc.IndexLocation:
 		if rep, hasRep := recRepresentative(l.Base); hasRep {
 			l.Base = rep
 			return l, true

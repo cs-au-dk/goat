@@ -6,19 +6,8 @@ import (
 	c "github.com/fatih/color"
 )
 
-// For indexing into Value products
-type vk = int
-
-var VK = struct {
-	ALLOC vk
-	PTR   vk
-	CH    vk
-}{
-	ALLOC: 0,
-	PTR:   1,
-	CH:    2,
-}
-
+// colorize wraps colorization functions for consistent colorization of
+// goroutines and superlocations.
 var colorize = struct {
 	Go       func(...interface{}) string
 	Superloc func(...interface{}) string

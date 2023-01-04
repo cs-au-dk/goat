@@ -17,6 +17,7 @@ import (
 
 	"github.com/cs-au-dk/goat/analysis/cfg"
 	u "github.com/cs-au-dk/goat/analysis/upfront"
+	"github.com/cs-au-dk/goat/analysis/upfront/condinline"
 	"github.com/cs-au-dk/goat/analysis/upfront/loopinline"
 	"github.com/cs-au-dk/goat/pkgutil"
 	"github.com/cs-au-dk/goat/utils/graph"
@@ -24,55 +25,68 @@ import (
 	_ "github.com/fatih/color"
 
 	"golang.org/x/tools/go/packages"
-	"golang.org/x/tools/go/pointer"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 )
 
-func init() {
-	//color.NoColor = false
-}
-
+// LoadResult contains relevant information obtained after loading a Go program.
+// It includes the SSA representation of the program, the control-flow graph,
+// and the results of the pre-analysis (points-to analysis, side-effect analysis, etc.).
 type LoadResult struct {
-	MainPkg          *packages.Package
-	Prog             *ssa.Program
-	Mains            []*ssa.Package
-	Cfg              *cfg.Cfg
-	Goros            u.GoTopology
-	GoroCycles       u.GoCycles
-	Pointer          *pointer.Result
-	CallDAG          graph.SCCDecomposition[*ssa.Function]
-	PrunedCallDAG    graph.SCCDecomposition[*ssa.Function]
+	// MainPkg is the package focused by the analysis.
+	MainPkg *packages.Package
+	// Prog is the SSA representation of the entire program.
+	Prog *ssa.Program
+	// Mains denotes all the packages that can act as entry points.
+	Mains []*ssa.Package
+	// Cfg is the the specialized control-flow graph for a given Go program.
+	Cfg        *cfg.Cfg
+	Goros      u.GoTopology
+	GoroCycles u.GoCycles
+	// Pointer represnts the result of the points-to analysis.
+	Pointer *u.PointerResult
+	// CallDAG encodes the SCC decomposition of the complete program call graph.
+	CallDAG graph.SCCDecomposition[*ssa.Function]
+	// PrunedCallDAG encodes the SCC decomposition of the pruned program call graph.
+	PrunedCallDAG graph.SCCDecomposition[*ssa.Function]
+	// CtrLocPriorities maps the priorities of each control location
 	CtrLocPriorities u.CtrLocPriorities
-	WrittenFields    u.WrittenFields
+	// WrittenFields contains the result of the side-effect analysis.
+	WrittenFields u.WrittenFields
 }
 
+// upfrontAnalyses computes the collection of local packages, and populates the LoadResult
+// with the results of the pre-analysis:
+//   - The results of the points-to analysis.
+//   - The enhanced CFG.
+//   - The (pruned) call graph, and its SCC condensation as a call DAG.
+//   - The results of the side-effect analysis.
+//   - The priorities of control locations.
 func (res *LoadResult) upfrontAnalyses() {
 	pkgutil.GetLocalPackages(res.Mains, res.Prog.AllPackages())
 
+	// If the points-to analysis information is not ready, compute it.
 	if res.Pointer == nil {
 		res.Pointer = u.TotalAndersen(res.Prog, res.Mains)
 	}
 
+	// If the CFG is not ready, compute it.
 	if res.Cfg == nil {
-		res.Cfg = cfg.GetCFG(res.Prog, res.Mains, res.Pointer)
+		res.Cfg = cfg.GetCFG(res.Prog, res.Mains, &res.Pointer.Result)
 	}
 
-	// TODO: Revisit
-	// if !utils.Opts().IsWholeProgramAnalysis() {
-	// 	res.Goros = u.CollectGoros(res.Pointer)
-	// 	res.GoroCycles = res.Goros.Cycles()
-	// }
-
+	// Compute the call graph SCC condensation (and the pruned variant).
 	cg := res.Pointer.CallGraph
 	entries := []*ssa.Function{cg.Root.Func}
 	res.CallDAG = graph.FromCallGraph(cg, false).SCC(entries)
 	res.PrunedCallDAG = graph.FromCallGraph(cg, true).SCC(entries)
 
+	// Compute control location priorities, based on the pruned call DAG.
 	res.CtrLocPriorities = u.GetCtrLocPriorities(res.Cfg.Functions(), res.PrunedCallDAG)
 	res.WrittenFields = u.ComputeWrittenFields(res.Pointer, res.PrunedCallDAG)
 }
 
+// LoadExampleAsPackages loads an example package to be used for a test.
 func LoadExampleAsPackages(t *testing.T, pathToRoot string, pkg string, loopInline bool) []*packages.Package {
 	// Invoking the package tools is slow because it uses `go list` under the hood.
 	// If the package doesn't have imports we can take a fast path by loading the
@@ -101,8 +115,12 @@ func LoadExampleAsPackages(t *testing.T, pathToRoot string, pkg string, loopInli
 		t.Fatal("Example contains more than just a main package?")
 	}
 
+	if err := u.ASTTranform(pkgs, condinline.Transform); err != nil {
+		t.Fatal("Cond inlining failed:", err)
+	}
+
 	if loopInline {
-		if err := loopinline.InlineLoops(pkgs); err != nil {
+		if err := u.ASTTranform(pkgs, loopinline.Transform); err != nil {
 			t.Fatal("Loop inlining failed:", err)
 		}
 	}
@@ -218,6 +236,9 @@ func LoadSourceAsPackages(t *testing.T, importPath string, content string) []*pa
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := u.ASTTranform(pkgs, condinline.Transform); err != nil {
+		t.Fatal("Cond inlining failed:", err)
+	}
 	return pkgs
 }
 
@@ -242,7 +263,7 @@ func ParallelHelper(t *testing.T, pkgs []*packages.Package, f func(LoadResult)) 
 	res.Mains = ssautil.MainPackages(res.Prog.AllPackages())
 
 	res.Pointer = u.TotalAndersen(res.Prog, res.Mains)
-	res.Cfg = cfg.GetCFG(res.Prog, res.Mains, res.Pointer)
+	res.Cfg = cfg.GetCFG(res.Prog, res.Mains, &res.Pointer.Result)
 
 	// Analyses or procedures that touch global state are protected by the
 	// analysisLock. This includes CollectNames, GetLocalPackages and the main
@@ -268,8 +289,11 @@ func ListGoKerPackages(t *testing.T, pathToRoot string) []string {
 				"862_fixed",
 			},
 			"hugo": {
-				"5379", // SO - too many standard libraries
+				"5379", // sync.Once - too many standard libraries
 				// Spurious cycles cause analysis blowup
+				// Analysis of syscall.Getenv crashes due to syscall.envs
+				// having an under-approximated points-to set (because the
+				// pointer analysis does not try to reason about foreign code).
 			},
 			"etcd": {
 				// Needs investigation after introduction of IndexAddr work-around.

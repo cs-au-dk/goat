@@ -6,6 +6,7 @@ import (
 	i "github.com/cs-au-dk/goat/utils/indenter"
 )
 
+// Product is a member of a product lattice.
 type Product struct {
 	element
 	// The arity of the products we use is small (the list of elements is
@@ -20,6 +21,7 @@ func (p Product) Product() Product {
 	return p
 }
 
+// newProduct creates a fresh element for the given product lattice.
 func newProduct(lat Lattice) Product {
 	lat2 := lat.Product()
 	sl := make([]Element, len(lat2.product))
@@ -29,6 +31,7 @@ func newProduct(lat Lattice) Product {
 	return Product{element{lat2}, &sl}
 }
 
+// Product creates a product factory for the given lattice.
 func (elementFactory) Product(lat Lattice) func(members ...Element) Product {
 	switch lat := lat.(type) {
 	case *ProductLattice:
@@ -73,6 +76,7 @@ func (p Product) Height() (h int) {
 	return
 }
 
+// forall checks that all members of the product satisfy a given property.
 func (p Product) forall(f func(int, Element) bool) bool {
 	for i, e := range *p.prod {
 		if !f(i, e) {
@@ -82,11 +86,13 @@ func (p Product) forall(f func(int, Element) bool) bool {
 	return true
 }
 
+// Eq computes m = o. Performs lattice dynamic type checking.
 func (e1 Product) Eq(e2 Element) bool {
 	checkLatticeMatch(e1.lattice, e2.Lattice(), "=")
 	return e1.eq(e2)
 }
 
+// eq computes m = o.
 func (p Product) eq(oe Element) bool {
 	o, ok := oe.(Product)
 	if !ok {
@@ -98,11 +104,13 @@ func (p Product) eq(oe Element) bool {
 	})
 }
 
+// Geq computes m ⊒ o. Performs lattice dynamic type checking.
 func (e1 Product) Geq(e2 Element) bool {
 	checkLatticeMatch(e1.lattice, e2.Lattice(), "⊒")
 	return e1.geq(e2)
 }
 
+// geq computes m ⊒ o.
 func (e1 Product) geq(e2 Element) bool {
 	switch e2 := e2.(type) {
 	case Product:
@@ -118,11 +126,13 @@ func (e1 Product) geq(e2 Element) bool {
 	}
 }
 
+// Leq computes m ⊑ o. Performs lattice dynamic type checking.
 func (e1 Product) Leq(e2 Element) bool {
 	checkLatticeMatch(e1.lattice, e2.Lattice(), "⊑")
 	return e1.leq(e2)
 }
 
+// leq computes m ⊑ o.
 func (e1 Product) leq(e2 Element) bool {
 	switch e2 := e2.(type) {
 	case Product:
@@ -138,11 +148,13 @@ func (e1 Product) leq(e2 Element) bool {
 	}
 }
 
+// Join computes m ⊔ o. Performs lattice dynamic type checking.
 func (e1 Product) Join(e2 Element) Element {
 	checkLatticeMatch(e1.lattice, e2.Lattice(), "⊔")
 	return e1.join(e2)
 }
 
+// MonoJoin is a monomorphic variant of m ⊔ o for products.
 func (e1 Product) MonoJoin(e2 Product) Product {
 	// Improves performance a lot.
 	if e1.prod == e2.prod {
@@ -158,6 +170,7 @@ func (e1 Product) MonoJoin(e2 Product) Product {
 	return e1
 }
 
+// join computes m ⊔ o.
 func (e1 Product) join(e2 Element) Element {
 	switch e2 := e2.(type) {
 	case Product:
@@ -171,11 +184,13 @@ func (e1 Product) join(e2 Element) Element {
 	}
 }
 
+// Meet computes m ⊓ o. Performs lattice dynamic type checking.
 func (e1 Product) Meet(e2 Element) Element {
 	checkLatticeMatch(e1.lattice, e2.Lattice(), "⊓")
 	return e1.meet(e2)
 }
 
+// MonoMeet is a monomorphic variant of m ⊓ o for inter-processual analysis result.
 func (e1 Product) MonoMeet(e2 Product) Product {
 	// Improves performance a lot.
 	if e1.prod == e2.prod {
@@ -191,6 +206,7 @@ func (e1 Product) MonoMeet(e2 Product) Product {
 	return e1
 }
 
+// meet computes m ⊓ o.
 func (e1 Product) meet(e2 Element) Element {
 	switch e2 := e2.(type) {
 	case Product:
@@ -204,6 +220,8 @@ func (e1 Product) meet(e2 Element) Element {
 	}
 }
 
+// Update retrieves a product where its `i`-th member has been updated
+// to the given value `e2`. Performs lattice dynamic type checking.
 func (e1 Product) Update(i int, e2 Element) Product {
 	prodLat := e1.lattice.Product()
 	if i < 0 || len(prodLat.product) <= i {
@@ -216,6 +234,8 @@ func (e1 Product) Update(i int, e2 Element) Product {
 	return e1.update(i, e2)
 }
 
+// update retrieves a product where its `i`-th member has been updated
+// to the given value `e2`.
 func (e1 Product) update(i int, e2 Element) Product {
 	sl := make([]Element, len(*e1.prod))
 	copy(sl, *e1.prod)
@@ -224,6 +244,7 @@ func (e1 Product) update(i int, e2 Element) Product {
 	return e1
 }
 
+// Get retrieves the `i`-th element of the product.
 func (e Product) Get(i int) Element {
 	return (*e.prod)[i]
 }

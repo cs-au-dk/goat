@@ -1,0 +1,16 @@
+# Abstract operation outcomes description
+
+name: OpOutcomes
+implementation: finite
+informal-lattice: lattice of operation outcomes
+description: |
+  is a member of the lattice of operation outcomes, binding successful and panicking
+  outcomes to resulting abstract values with which to execute transfers.
+description-lattice: |
+  is the lattice of operation outcomes, encompassing all possible bindings
+  from operation outcomes to resulting abstract values.
+informal: operation outcomes
+key: outcomeName
+informal-key: outcome
+value: AbstractValue
+informal-value: abstract value

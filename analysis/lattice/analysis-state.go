@@ -4,8 +4,9 @@ import (
 	"github.com/cs-au-dk/goat/analysis/defs"
 )
 
-//go:generate go run generate-product.go AnalysisState Memory,Memory,Memory,Memory ThreadCharges,ThreadCharges,ThreadCharges,Charges
+//go:generate go run generate-product.go analysis-state
 
+// AnalysisStateLattice represents the lattice of analysis results at a single superlocation.
 type AnalysisStateLattice struct {
 	ProductLattice
 }
@@ -14,6 +15,8 @@ func (latticeFactory) AnalysisState() *AnalysisStateLattice {
 	return analysisStateLattice
 }
 
+// analysisStateLattice is a singleton instantiation of the lattice of
+// analysis results at a single superlocation.
 var analysisStateLattice *AnalysisStateLattice = &AnalysisStateLattice{
 	*latFact.Product(
 		memoryLattice,
@@ -36,6 +39,8 @@ func init() {
 	_checkAnalysisState(analysisStateLattice.Bot().(AnalysisState))
 }
 
+// AnalysisState produces a new analysis state, given the starting abstract memory and
+// bindings of thread charges.
 func (elementFactory) AnalysisState(mem Memory, ch ThreadCharges) AnalysisState {
 	return AnalysisState{
 		element: element{analysisStateLattice},
@@ -71,26 +76,9 @@ func (c *AnalysisStateLattice) AnalysisState() *AnalysisStateLattice {
 	return c
 }
 
+// AddCharge charges control location `to` for `from` at abstract thread `tid`.
 func (s AnalysisState) AddCharge(tid defs.Goro, from defs.CtrLoc, to defs.CtrLoc) AnalysisState {
 	return s.UpdateThreadCharges(
 		s.ThreadCharges().WeakUpdate(tid, elFact.Charges(from, to)),
 	)
 }
-
-// func (a AnalysisState) ChanMemory() string {
-// 	return a.Memory().Filter(func(_ loc.AddressableLocation, av AbstractValue) bool {
-// 		switch {
-// 		case av.IsChan():
-// 			return true
-// 		case av.IsPointer():
-// 			for _, l := range av.PointerValue().NonNilEntries() {
-// 				if l2, ok := l.(loc.AddressableLocation); ok {
-// 					if av, ok := a.Memory().Get(l2); ok && av.IsChan() {
-// 						return true
-// 					}
-// 				}
-// 			}
-// 		}
-// 		return false
-// 	}).String()
-// }

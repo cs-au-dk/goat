@@ -9,21 +9,25 @@ import (
 	"github.com/benbjohnson/immutable"
 )
 
+// baseMap is embedded by maps that use immutable maps
+// for their underlying implementation.
 type baseMap[K any] struct {
 	element
 	mp *immutable.Map[K, Element]
 }
 
+// Size retrieves the number of keys bound to non-⊥ elements.
 func (m baseMap[K]) Size() int {
 	return m.mp.Len()
 }
 
+// Contains checks whether the given key is bound to a non-⊥ element.
 func (m baseMap[K]) Contains(key K) bool {
 	_, found := m.mp.Get(key)
 	return found
 }
 
-// Perform a lookup in the map. The returned boolean indicates if the given key was found.
+// Get performs map lookup. The returned boolean indicates if the given key was found.
 func (m baseMap[K]) Get(k K) (Element, bool) {
 	v, found := m.mp.Get(k)
 	if !found {
@@ -33,6 +37,8 @@ func (m baseMap[K]) Get(k K) (Element, bool) {
 	return v, true
 }
 
+// GetOrDefault performs map lookup, and returns the given default element, if the key
+// was not bound to a non-⊥ element.
 func (m baseMap[K]) GetOrDefault(k K, def Element) Element {
 	if v, found := m.Get(k); found {
 		return v
@@ -41,6 +47,8 @@ func (m baseMap[K]) GetOrDefault(k K, def Element) Element {
 	}
 }
 
+// GetUnsafe performs map lookup and throws a fatal exception if the key is
+// not explicitly bound.
 func (m baseMap[K]) GetUnsafe(k K) Element {
 	if v, found := m.Get(k); found {
 		return v
@@ -50,6 +58,7 @@ func (m baseMap[K]) GetUnsafe(k K) Element {
 	panic("Unreachable")
 }
 
+// Find retrieves a key-value pair that satisifies the given predicate.
 func (m baseMap[K]) Find(f func(k K, e Element) bool) (K, Element, bool) {
 	for iter := m.mp.Iterator(); !iter.Done(); {
 		k, e, _ := iter.Next()
@@ -63,11 +72,15 @@ func (m baseMap[K]) Find(f func(k K, e Element) bool) (K, Element, bool) {
 	return zk, nil, false
 }
 
+// Update retrieves a map with an updated binding for the given key-value pair.
 func (m baseMap[K]) Update(loc K, elem Element) baseMap[K] {
 	m.mp = m.mp.Set(loc, elem)
 	return m
 }
 
+// WeakUpdate retrieves a map with an updated binding for the given key-value pair,
+// if the key was not previously bound, or the with the key bound to the
+// LUB between the given and previously bound values.
 func (m baseMap[K]) WeakUpdate(key K, elem Element) baseMap[K] {
 	if prev, found := m.Get(key); found {
 		return m.Update(key, prev.Join(elem))
@@ -76,11 +89,14 @@ func (m baseMap[K]) WeakUpdate(key K, elem Element) baseMap[K] {
 	}
 }
 
+// Remove retrieves a map where the given key is bound to ⊥.
 func (m baseMap[K]) Remove(key K) baseMap[K] {
 	m.mp = m.mp.Delete(key)
 	return m
 }
 
+// ForEach executes the given procedure for each key-value pair in the map,
+// where the key is explicitly bound.
 func (a baseMap[K]) ForEach(do func(K, Element)) {
 	for iter := a.mp.Iterator(); !iter.Done(); {
 		k, v, _ := iter.Next()
@@ -88,6 +104,8 @@ func (a baseMap[K]) ForEach(do func(K, Element)) {
 	}
 }
 
+// ForAll checks that all explicitly bound key-value pairs in the map
+// satisfy the given predicate.
 func (m baseMap[K]) ForAll(pred func(K, Element) bool) bool {
 	for iter := m.mp.Iterator(); !iter.Done(); {
 		k, v, _ := iter.Next()
@@ -102,6 +120,8 @@ func (m baseMap[K]) String() string {
 	return m.StringFiltered(func(K) bool { return true })
 }
 
+// StringFiltered returns a string representation of the map where the
+// key satisfies the given predicate.
 func (m baseMap[K]) StringFiltered(filter func(K) bool) string {
 	name := m.Lattice().String()
 	length := m.Size()
@@ -127,7 +147,7 @@ func (m baseMap[K]) StringFiltered(filter func(K) bool) string {
 	return i.Indenter().Start(name + ": {").NestThunked(buf...).End("}")
 }
 
-// Monomorphic join. Returns BaseMap, skipping a type-conversion.
+// MonoJoin is a monomorphic variant of m ⊔ o for maps.
 func (m baseMap[K]) MonoJoin(o baseMap[K]) baseMap[K] {
 	if m.Size() == 0 {
 		return o
@@ -155,11 +175,13 @@ func (m baseMap[K]) MonoJoin(o baseMap[K]) baseMap[K] {
 	return m
 }
 
+// Join computes m ⊔ o. Performs lattice dynamic type checking.
 func (m baseMap[K]) Join(o Element) Element {
 	checkLatticeMatch(m.lattice, o.Lattice(), "⊔")
 	return m.join(o)
 }
 
+// join computes m ⊔ o.
 func (m baseMap[K]) join(o Element) Element {
 	switch o := o.(type) {
 	case baseMap[K]:
@@ -173,11 +195,13 @@ func (m baseMap[K]) join(o Element) Element {
 	}
 }
 
+// Eq computes m = o. Performs lattice dynamic type checking.
 func (m baseMap[K]) Eq(o Element) bool {
 	checkLatticeMatch(m.lattice, o.Lattice(), "=")
 	return m.eq(o)
 }
 
+// eq computes m = o.
 func (e1 baseMap[K]) eq(e2 Element) bool {
 	switch e2 := e2.(type) {
 	case baseMap[K]:
@@ -202,20 +226,24 @@ func (e1 baseMap[K]) eq(e2 Element) bool {
 	}
 }
 
+// Geq computes m ⊒ o. Performs lattice dynamic type checking.
 func (e1 baseMap[K]) Geq(e2 Element) bool {
 	checkLatticeMatch(e1.lattice, e2.Lattice(), "⊒")
 	return e1.geq(e2)
 }
 
+// geq computes m ⊒ o.
 func (e1 baseMap[K]) geq(e2 Element) bool {
 	return e2.leq(e1) // OBS
 }
 
+// Leq computes m ⊑ o. Performs lattice dynamic type checking.
 func (e1 baseMap[K]) Leq(e2 Element) bool {
 	checkLatticeMatch(e1.lattice, e2.Lattice(), "⊑")
 	return e1.leq(e2)
 }
 
+// leq computes m ⊑ o.
 func (e1 baseMap[K]) leq(e2 Element) bool {
 	switch e2 := e2.(type) {
 	case baseMap[K]:
@@ -242,14 +270,17 @@ func (e1 baseMap[K]) leq(e2 Element) bool {
 	}
 }
 
+// MonoMeet is a monomorphic variant of m ⊓ o for maps.
 func (m baseMap[K]) MonoMeet(o baseMap[K]) baseMap[K] {
 	panic(errUnsupportedOperation)
 }
 
+// Meet computes m ⊓ o. Performs lattice dynamic type checking.
 func (m baseMap[K]) Meet(o Element) Element {
 	panic(errUnsupportedOperation)
 }
 
+// meet computes m ⊓ o.
 func (m baseMap[K]) meet(o Element) Element {
 	panic(errUnsupportedOperation)
 }

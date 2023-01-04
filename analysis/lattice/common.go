@@ -11,6 +11,7 @@ import (
 
 var opts = utils.Opts()
 
+// colorize exposes consistent colorization strategies for lattices and their elements.
 var colorize = struct {
 	Lattice    func(...interface{}) string
 	LatticeCon func(...interface{}) string
@@ -43,6 +44,7 @@ var colorize = struct {
 	},
 }
 
+// Common errors.
 var (
 	errUnsupportedTypeConversion = errors.New("UnsupportedTypeConversion")
 	errUnsupportedOperation      = errors.New("UnsupportedOperationError")
@@ -53,8 +55,9 @@ var (
 	}
 )
 
+// Element is an interface to which every lattice member implementation must conform.
 type Element interface {
-	// Type conversion API
+	// Lattice element type conversion API
 	OneElement() oneElementLatticeElement
 	TwoElement() twoElementLatticeElement
 	AbstractValue() AbstractValue
@@ -77,6 +80,7 @@ type Element interface {
 	Set() Set
 	ThreadCharges() ThreadCharges
 
+	// Lattice retrieves the lattice to which the element belongs.
 	Lattice() Lattice
 
 	// External API for lattice element operations.
@@ -88,7 +92,7 @@ type Element interface {
 	Meet(Element) Element
 
 	// Internal lattice element operations, that skip
-	// lattice type checking. Only use under the
+	// lattice type checking. Only to be used under the
 	// assumption of lattice type safety.
 	leq(Element) bool
 	geq(Element) bool
@@ -103,31 +107,34 @@ type Element interface {
 	Height() int
 }
 
+// element is the baseline type that all lattice elements must embed.
+// It stores which lattice the element belongs to.
 type element struct {
 	lattice Lattice
 }
 
+// Lattice retrieves the lattice that the element belongs to.
 func (e element) Lattice() Lattice {
 	return e.lattice
 }
 
+// AnalysisIntraprocess will panic, as this lattice element does not belong to the analysis result lattice.
 func (element) Analysis() Analysis {
 	panic(errUnsupportedTypeConversion)
 }
 
+// AnalysisIntraprocess will panic, as this lattice element does not belong to the intra-processual analysis result lattice.
 func (element) AnalysisIntraprocess() AnalysisIntraprocess {
 	panic(errUnsupportedTypeConversion)
 }
 
+// AbstractValue will panic, as this lattice element does not belong to the abstract value lattice.
 func (e element) AbstractValue() AbstractValue {
 	panic(errUnsupportedTypeConversion)
 }
 
+// ChannelInfo will panic, as this lattice element does not belong to the abstract channel lattice.
 func (element) ChannelInfo() ChannelInfo {
-	panic(errUnsupportedTypeConversion)
-}
-
-func (element) Cond() Cond {
 	panic(errUnsupportedTypeConversion)
 }
 
@@ -135,43 +142,57 @@ func (element) Dropped() *DroppedTop {
 	panic(errUnsupportedTypeConversion)
 }
 
+// OpOutcomes will fail, as this lattice element does not belong to the lattice of operation outcomes.
 func (element) OpOutcomes() OpOutcomes {
 	panic(errUnsupportedTypeConversion)
 }
 
+// Flat will fail, as this lattice element does not belong to the flat lattice.
 func (element) Flat() FlatElement {
 	panic(errUnsupportedTypeConversion)
 }
 
+// FlatInt will fail, as this lattice element does not belong to the flat lattice of integers.
 func (element) FlatInt() FlatIntElement {
 	panic(errUnsupportedTypeConversion)
 }
 
+// Interval will fail, as this lattice element does not belong to the interval lattice.
 func (element) Interval() Interval {
 	panic(errUnsupportedTypeConversion)
 }
 
+// Lifted will fail, as this lattice element does not belong to a lifted lattice.
 func (element) Lifted() *LiftedBot {
 	panic(errUnsupportedTypeConversion)
 }
 
+// Memory will fail, as this lattice element does not belong to the abstract memory lattice.
 func (element) Memory() Memory {
 	panic(errUnsupportedTypeConversion)
 }
 
+// OneElement will fail, as this lattice element does not belong to the one-element lattice.
 func (element) OneElement() oneElementLatticeElement {
 	panic(errUnsupportedTypeConversion)
 }
 
+// PointsTo will fail, as this lattice element does not belong to the lattice of points-to sets.
 func (element) PointsTo() PointsTo {
 	panic(errUnsupportedTypeConversion)
 }
 
+// Product will fail, as this lattice element does not belong to a product lattice.
 func (element) Product() Product {
 	panic(errUnsupportedTypeConversion)
 }
 
+// RWMutex will fail, as this lattice element does not belong to the abstract RWMutex lattice.
 func (element) RWMutex() RWMutex {
+	panic(errUnsupportedTypeConversion)
+}
+
+func (element) Cond() Cond {
 	panic(errUnsupportedTypeConversion)
 }
 

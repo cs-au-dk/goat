@@ -4,10 +4,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	//"path/filepath"c
 )
 
-// MakePath returns a string based on whether a project name was provided or not
+// MakePath returns a string based on whether a Go package path was provided or not.
+// The first non-flag argument passed to Goat is the target package.
+// If no path is provided, it defaults to "hello-world".
 func MakePath() (path string) {
 	path, err := os.Getwd()
 	if err != nil {
@@ -17,10 +18,8 @@ func MakePath() (path string) {
 	args := flag.Args()
 	if len(args) >= 1 {
 		path = args[0]
-		//path = filepath.Join("Goat", "examples", args[0])
 	} else {
 		path = "hello-world"
-		//path = filepath.Join("Goat", "examples", "hello-world")
 	}
 
 	return

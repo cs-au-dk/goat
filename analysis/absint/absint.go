@@ -19,12 +19,20 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-func makeConstant(x interface{}) L.AbstractValue {
+var (
+	// ErrFocusedPrimitiveSwapped is emitted when a focused primitive was wildcard-swapped.
+	ErrFocusedPrimitiveSwapped = errors.New("Focused primitive was wildcard swapped")
+	// ErrUnboundedGoroutineSpawn is emitted when an unbounded number of goroutines is swapped
+	// at the same abstract goroutine location.
+	ErrUnboundedGoroutineSpawn = errors.New("Unbounded goroutine spawns detected")
+)
+
+// makeConstant creates an abstract basic value from a given constant value.
+func makeConstant(x any) L.AbstractValue {
 	return Elements().AbstractBasic(x)
 }
 
-// Make channel value from given concrete channel
-// or abstract "make chan" instruction.
+// makeChannelValue creates a channel value, given the capacity, status, and buffer size.
 func makeChannelValue(
 	capacity L.FlatElement,
 	open bool,
@@ -32,6 +40,7 @@ func makeChannelValue(
 ) L.AbstractValue {
 	elem := Elements().AbstractChannel()
 
+	// If the capacity is ⊤, then the buffer size must implicitly be ⊤.
 	var flatBuf, interval L.Element
 	if capacity.IsTop() {
 		flatBuf = Lattices().FlatInt().Top()
@@ -52,32 +61,41 @@ func makeChannelValue(
 	))
 }
 
-// Create a channel with a bottom payload, based on the type.
-// This ensures that calls to .ToTop() on the channel value will
-// have the payload set to an abstract value with a determined type.
+// makeChannelWithBotPayload creates a channel with a ⊥ payload for
+// the given payload type. This ensures that calls to .ToTop() on
+// the channel value will yield a ⊤ payload of the correct type.
 func makeChannelWithBotPayload(
 	capacity L.FlatElement,
 	open bool,
 	buffer int,
 	payloadType T.Type,
 ) L.AbstractValue {
+	// Get the ⊥ payload value
 	botPayload := L.ZeroValueForType(payloadType).ToBot()
 	av := makeChannelValue(capacity, open, buffer)
+
+	// Update abstract channel value with ⊥ payload.
 	ch := av.ChanValue().UpdatePayload(botPayload)
 	return av.Update(ch)
 }
 
-func evaluateSSA(g defs.Goro, mem L.Memory, val ssa.Value) L.AbstractValue {
+// EvaluateSSA retrieves the abstract value of a given SSA value for
+// a given abstract thread, given the abstract memory.
+func EvaluateSSA(g defs.Goro, mem L.Memory, val ssa.Value) L.AbstractValue {
 	switch n := val.(type) {
 	// The following values do not correspond to virtual registers
 	case *ssa.Const:
 		if cval := constant.Val(n.Value); cval != nil {
+			// If the constant is a primitive, construct an abstract constant
+			// with the underlying value.
 			return makeConstant(cval)
 		} else {
+			// If the constant is a pointer-like, construct an abstract points-to set
+			// containing only the nil-pointer.
 			return Elements().AbstractPointerV(loc.NilLocation{})
 		}
 	case *ssa.Builtin:
-		panic("Hmm.")
+		panic("Unexpected evaluation of built-in as SSA value.")
 	case *ssa.Function:
 		// Return a pointer value that contains the function.
 		// The "proper" alternative would be to allocate an empty closure and return a pointer
@@ -96,55 +114,30 @@ func evaluateSSA(g defs.Goro, mem L.Memory, val ssa.Value) L.AbstractValue {
 		// and we would have fewer allocations in the memory.
 		return Elements().AbstractPointerV(loc.FunctionPointer{Fun: n})
 	case *ssa.Global:
+		// Global variables are retrieved via indirection. Return
+		// an abstract points-to set that only includes it.
 		return Elements().AbstractPointerV(loc.GlobalLocation{Site: n})
 	case *ssa.FreeVar:
 		// Fall through
 	}
 
-	// We can get the value from the register stored in memory
+	// Retrieve the value of the register stored in memory
 	loc := loc.LocationFromSSAValue(g, val)
 	fval, found := mem.Get(loc)
 	if found {
 		return fval
-	} else {
-		panic("Not found " + loc.String())
 	}
 
-	/* It might be the case that an SSA register is missing in the memory for valid reasons.
-	Consider this sequence of instructions:
-	[ t0 = alloc chan int (ch) ]
-	[ t1 = make chan int 0 ]
-	[ *t0 = t1 ]
-	...
-	[ t2 = *t0 ]
-	[ t3 = <-t2 ]
-	And assume that in the concrete configuration we stopped at, the goroutine is at the
-	last instruction. In this case we only have the values of local variables, parameters
-	and free variables, not the values of the SSA registers. Due to the simplicity
-	of the SSA conversion, we can try to evaluate the instruction backwards to figure
-	out the values of t2 and t0, leading us to the local variable ch.
-	*/
-
-	/*
-		// Only virtual registers should be missing!
-		if _, ok := val.(ssa.Instruction); !ok {
-			log.Fatalf("Non-register was missing in abstract memory: %T %v", val, val)
-		}
-		fval = evaluateSSA(tid, mem, val, true)
-		// TODO: Ideally we would update the memory here to prevent lots of recomputations.
-		// Maybe that's possible we if change the interface a bit.
-		return fval
-	*/
-
-	// panic("Unreachable")
+	panic("Value of heap location " + loc.String() + " not found.")
 }
 
-// TODO: Should probably just change all occurences of evaluateSSA to EvaluateSSA instead
-var EvaluateSSA = evaluateSSA
-
-func (C AnalysisCtxt) getConcPrimitivesForValue(g defs.Goro, mem L.Memory, ssaVal ssa.Value) (L.PointsTo, L.Memory) {
-	v, newMem := C.swapWildcard(g, mem, ssaVal)
+// getConcPrimitivesForValue retrieves a points-to set of concurrent primitives,
+// and the updated memory, given a wildcard swap.
+func (C AnalysisCtxt) getConcPrimitivesForValue(sl defs.Superloc, g defs.Goro, mem L.Memory, ssaVal ssa.Value) (L.PointsTo, L.Memory) {
+	// Retrieve wildcard swapped value and updated memory.s
+	v, newMem := C.swapWildcard(sl, g, mem, ssaVal)
 	mops := L.MemOps(newMem)
+
 	ptsto := v.PointerValue()
 	C.CheckPointsTo(ptsto)
 
@@ -185,7 +178,7 @@ func (C AnalysisCtxt) getConcPrimitivesForValue(g defs.Goro, mem L.Memory, ssaVa
 			case val.IsPointer():
 				res = res.MonoJoin(val.PointerValue())
 			case val.IsWildcard():
-				val, newMem := C.swapWildcardLoc(g, mops.Memory(), l)
+				val, newMem := C.swapWildcardLoc(sl, mops.Memory(), l)
 				mops = L.MemOps(newMem)
 				res = res.MonoJoin(val.PointerValue())
 			}
@@ -220,53 +213,78 @@ func (C AnalysisCtxt) getConcPrimitivesForValue(g defs.Goro, mem L.Memory, ssaVa
 
 	return ptsto, mops.Memory()
 }
-
-var ErrFocusedPrimitiveSwapped = errors.New("Focused primitive was wildcard swapped")
-var ErrUnboundedGoroutineSpawn = errors.New("Unbounded goroutine spawns detected")
-
-func (C AnalysisCtxt) swapWildcardLoc(g defs.Goro, mem L.Memory, l loc.AddressableLocation) (
+func (C AnalysisCtxt) swapWildcardLoc(sl defs.Superloc, mem L.Memory, l loc.Location) (
 	L.AbstractValue, L.Memory,
 ) {
-	mem = A.SwapWildcard(C.LoadRes.Pointer, mem, l)
-	C.LogWildcardSwap(mem, l)
-	av := mem.GetUnsafe(l)
-
-	if C.Metrics.Enabled() && C.FocusedPrimitives != nil {
-		ptsto := av.PointerValue()
+	var valToPtsTo map[ssa.Value]L.PointsTo
+	if C.FocusedPrimitives != nil && opts.OptimisticFocusedSwap() {
+		// Since the fragment is constructed such that it encompasses all
+		// allocations of the focused primitives, we can assume that if a
+		// wildcard ptsto set contains a focused primitive according to the
+		// pointer analysis it must be one that was allocated during the
+		// analysis.
+		// Here we construct a map from focused primitive allocation sites to
+		// locations that correspond to that primitive that we have seen.
+		// These are then used in the wildcard swapping process to prevent
+		// materialization of ⊤ versions of focused primitives.
+		valToPtsTo = map[ssa.Value]L.PointsTo{}
 		for _, prim := range C.FocusedPrimitives {
-			if ptsto.Contains(loc.AllocationSiteLocation{
-				Goro:    defs.Create().TopGoro(),
-				Context: prim.Parent(),
-				Site:    prim,
-			}) && !opts.NoAbort() {
-				// Panic also closes the skipped channel such that analysis aborts immediately.
-				C.Metrics.Panic(fmt.Errorf("%w: %v at %v", ErrFocusedPrimitiveSwapped, prim, l))
-				break
-			}
+			ptsto := []loc.Location{}
+			// Check whether each spawned goroutine has allocated the primitive.
+			sl.ForEach(func(g defs.Goro, _ defs.CtrLoc) {
+				aloc := loc.AllocationSiteLocation{
+					Goro:    g,
+					Site:    prim,
+					Context: prim.Parent(),
+				}
+				if _, found := mem.Get(aloc); found {
+					ptsto = append(ptsto, aloc)
+				}
+			})
+
+			valToPtsTo[prim] = Elements().PointsTo(ptsto...)
 		}
 	}
 
-	return av, mem
-}
+	av, mem := A.UnwrapWildcard(C.LoadRes.Pointer, mem, l, valToPtsTo)
+	mem = L.MemOps(mem).Update(l, av).Memory()
 
-func (C AnalysisCtxt) swapWildcard(g defs.Goro, mem L.Memory, v ssa.Value) (L.AbstractValue, L.Memory) {
-	av := evaluateSSA(g, mem, v)
+	C.LogWildcardSwap(mem, l)
 
-	if av.IsWildcard() {
-		l := loc.LocationFromSSAValue(g, v)
-		av, mem = C.swapWildcardLoc(g, mem, l)
+	if C.Metrics.Enabled() && C.FocusedPrimitives != nil && !opts.OptimisticFocusedSwap() && !opts.NoAbort() {
+		// Abort if the swapped in points-to set contains a focused primitive.
+		av.PointerValue().ForEach(func(l loc.Location) {
+			if _, isNil := l.(loc.NilLocation); isNil {
+				return
+			}
+
+			if C.IsLocationFocused(l, mem) {
+				// Panic also closes the skipped channel such that analysis aborts immediately.
+				C.Metrics.Panic(fmt.Errorf("%w: %v", ErrFocusedPrimitiveSwapped, l))
+			}
+		})
 	}
 
 	return av, mem
 }
 
-// Used for implementing ssa.FieldAddr and ssa.IndexAddr.
-// A field of -2 indicates IndexAddr.
-func (C AnalysisCtxt) wrapPointers(g defs.Goro, mem L.Memory, ssaPtr ssa.Value, field int) (
+func (C AnalysisCtxt) swapWildcard(sl defs.Superloc, g defs.Goro, mem L.Memory, v ssa.Value) (L.AbstractValue, L.Memory) {
+	av := EvaluateSSA(g, mem, v)
+
+	if av.IsWildcard() {
+		l := loc.LocationFromSSAValue(g, v)
+		av, mem = C.swapWildcardLoc(sl, mem, l)
+	}
+
+	return av, mem
+}
+
+// wrapPointers is used for implementing ssa.FieldAddr and ssa.IndexAddr.
+func (C AnalysisCtxt) wrapPointers(sl defs.Superloc, g defs.Goro, mem L.Memory, ssaPtr ssa.Value, field int) (
 	ret L.AbstractValue, newMem L.Memory, hasNil bool,
 ) {
 	entries := []loc.Location{}
-	v, mem := C.swapWildcard(g, mem, ssaPtr)
+	v, mem := C.swapWildcard(sl, g, mem, ssaPtr)
 	base := v.PointerValue()
 	C.CheckPointsTo(base)
 
@@ -282,17 +300,13 @@ func (C AnalysisCtxt) wrapPointers(g defs.Goro, mem L.Memory, ssaPtr ssa.Value, 
 
 	for _, ptr := range base.Entries() {
 		// Safety check
-		if aval := mops.GetUnsafe(ptr); field != -2 &&
+		if aval := mops.GetUnsafe(ptr); field != loc.AINDEX &&
 			!(aval.IsStruct() || aval.IsCond()) {
 			panic(fmt.Sprintf("Tried to make a field pointer to a non-struct value: %v\n"+
 				"Bound to location: %s", aval, ptr))
 		}
 
-		// if field != -2 {
 		entries = append(entries, loc.FieldLocation{Base: ptr, Index: field})
-		// } else {
-		// 	entries = append(entries, loc.FieldLocation{Base: ptr, Index: -2})
-		// }
 	}
 
 	return Elements().AbstractPointer(entries), mem, hasNil
@@ -330,10 +344,10 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 	//                    Helpers
 	//------------------------------------------------------
 	swapWildcard := func(mem L.Memory, v ssa.Value) (L.AbstractValue, L.Memory) {
-		return C.swapWildcard(g, mem, v)
+		return C.swapWildcard(s.Superloc, g, mem, v)
 	}
 	evalSSA := func(mem L.Memory, v ssa.Value) L.AbstractValue {
-		return evaluateSSA(g, mem, v)
+		return EvaluateSSA(g, mem, v)
 	}
 
 	//------------------------------------------------------
@@ -375,7 +389,7 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 	}
 
 	wrapPointers := func(ssaVal ssa.Value, field int) (L.AbstractValue, L.Memory) {
-		ret, mem, hasNil := C.wrapPointers(g, initMem, ssaVal, field)
+		ret, mem, hasNil := C.wrapPointers(s.Superloc, g, initMem, ssaVal, field)
 		if hasNil {
 			succs = succs.Update(cl.Panic(), initState)
 		}
@@ -419,7 +433,7 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 			if phi, ok := instr.(*ssa.Phi); ok {
 				mem = mem.Update(
 					loc.LocationFromSSAValue(g, phi),
-					evaluateSSA(g, initMem, phi.Edges[predIdx]),
+					EvaluateSSA(g, initMem, phi.Edges[predIdx]),
 				)
 			} else {
 				break
@@ -455,6 +469,50 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 
 	case *cfg.BuiltinCall:
 		switch n.Builtin().Name() {
+		case "cap":
+			// For channel capacities, we can extract it as a flat element,
+			// and convert it to an abstract value.
+			arg := n.Arg(0)
+			if _, ok := arg.Type().Underlying().(*T.Chan); !ok {
+				// Proceed normally if not operating on channels.
+				singleUpd(spoofCall(g, n.Call, initMem))
+				break
+			}
+
+			ch, mem := swapWildcard(initMem, arg)
+			mops := L.MemOps(mem)
+			res := Elements().AbstractBasic(0).ToBot()
+			ch.PointerValue().ForEach(func(l loc.Location) {
+				// If the result is already ⊤, stop early.
+				if res.BasicValue().IsTop() {
+					return
+				}
+
+				if _, isNil := l.(loc.NilLocation); isNil {
+					// Nil channels have capacity 0.
+					res = res.MonoJoin(Elements().AbstractBasic(int64(0)))
+					return
+				}
+
+				ch := mops.GetUnsafe(l).ChanValue()
+				if !ch.CapacityKnown() ||
+					!C.IsLocationFocused(l, mem) {
+					// If the capacity is unknown, or one of the channels may not be focused,
+					// the channel's capacity is ⊤
+					res = res.ToTop()
+					return
+				}
+
+				// Otherwise, join all the possible capacities
+				kap := ch.Capacity().FlatInt().IValue()
+				res = res.MonoJoin(Elements().AbstractBasic(int64(kap)))
+			})
+
+			// Update the value of the SSA register storing the capacity.
+			singleUpd(mem.Update(
+				loc.LocationFromSSAValue(g, n.Call.Value()),
+				res))
+
 		case "recover":
 			// Optimistically assume built-in recover calls are always performed
 			// when not panicking, making the results nil. Any branching on the
@@ -473,7 +531,7 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 			var argVs L.AbstractValue
 			if t, ok := apps.Type().Underlying().(*T.Basic); ok &&
 				t.Info()&T.IsString != 0 {
-				argVs = A.TypeAdapter(apps.Type(), slice.Type(), evaluateSSA(g, mem, apps))
+				argVs = A.TypeAdapter(apps.Type(), slice.Type(), EvaluateSSA(g, mem, apps))
 			} else {
 				argVs, mem = deref(mem, apps)
 			}
@@ -521,7 +579,7 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 		case "ssa:wrapnilchk":
 			// wrapnilchk returns ptr if non-nil, panics otherwise.
 			// (For use in indirection wrappers.)
-			argV := evaluateSSA(g, initMem, n.Args()[0])
+			argV := EvaluateSSA(g, initMem, n.Args()[0])
 			if argV.IsWildcard() {
 				singleUpd(initMem.Update(
 					loc.LocationFromSSAValue(g, n.Call.Value()),
@@ -543,7 +601,7 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 		}
 
 	case *cfg.DeferCall:
-		succs = C.callSuccs(g, cl, initState)
+		succs = C.callSuccs(s.Superloc, g, cl, initState)
 
 	case *cfg.PostDeferCall:
 		// For deferred calls we must filter the successors based on which defers are charged.
@@ -577,7 +635,7 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 	case *cfg.SSANode:
 		switch insn := n.Instruction().(type) {
 		case *ssa.Call:
-			succs = C.callSuccs(g, cl, initState)
+			succs = C.callSuccs(s.Superloc, g, cl, initState)
 
 		case *ssa.Defer:
 			newState := initState
@@ -626,7 +684,7 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 				res = Elements().AbstractPointerV(allocSite)
 			case *ssa.MakeChan:
 				C.Metrics.AddChan(cl)
-				capValue := evaluateSSA(g, mops.Memory(), val.Size).BasicValue()
+				capValue := EvaluateSSA(g, mops.Memory(), val.Size).BasicValue()
 				// Convert from constant prop. lattice to flat int lattice
 				switch {
 				case capValue.IsBot():
@@ -723,9 +781,9 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 
 			case *ssa.MakeClosure:
 				// Put free variables in the struct
-				bindings := make(map[interface{}]L.Element)
+				bindings := make(map[any]L.Element)
 				for i, value := range val.Bindings {
-					bindings[i] = evaluateSSA(g, initMem, value)
+					bindings[i] = EvaluateSSA(g, initMem, value)
 				}
 
 				res = mops.HeapAlloc(allocSite, Elements().AbstractClosure(val.Fn, bindings))
@@ -795,7 +853,7 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 				if val.IsString {
 					TOP := makeConstant(false).ToTop()
 
-					iter := evaluateSSA(g, initMem, val.Iter).BasicValue()
+					iter := EvaluateSSA(g, initMem, val.Iter).BasicValue()
 
 					switch {
 					case iter.IsTop():
@@ -861,7 +919,7 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 				}
 
 			case *ssa.Extract:
-				tVal := evaluateSSA(g, initMem, val.Tuple)
+				tVal := EvaluateSSA(g, initMem, val.Tuple)
 				switch strukt := tVal.Struct().(type) {
 				case *L.DroppedTop:
 					typ := val.Tuple.Type().(*T.Tuple)
@@ -874,13 +932,13 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 				}
 
 			case *ssa.ChangeType:
-				res = evaluateSSA(g, initMem, val.X)
+				res = EvaluateSSA(g, initMem, val.X)
 
 			case *ssa.ChangeInterface:
-				res = evaluateSSA(g, initMem, val.X)
+				res = EvaluateSSA(g, initMem, val.X)
 
 			case *ssa.Convert:
-				inner := evaluateSSA(g, initMem, val.X)
+				inner := EvaluateSSA(g, initMem, val.X)
 				toT := val.Type().Underlying()
 
 				res = func() L.AbstractValue {
@@ -942,7 +1000,7 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 				}()
 
 			case *ssa.MakeInterface:
-				res = mops.HeapAlloc(allocSite, evaluateSSA(g, initMem, val.X))
+				res = mops.HeapAlloc(allocSite, EvaluateSSA(g, initMem, val.X))
 
 			case *ssa.TypeAssert:
 				v, mem := swapWildcard(initMem, val.X)
@@ -1018,7 +1076,7 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 				}
 
 			case *ssa.Field:
-				res = evaluateSSA(g, initMem, val.X).StructValue().Get(val.Field).AbstractValue()
+				res = EvaluateSSA(g, initMem, val.X).StructValue().Get(val.Field).AbstractValue()
 
 			case *ssa.FieldAddr:
 				res, initMem = wrapPointers(val.X, val.Field)
@@ -1031,7 +1089,7 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 
 			case *ssa.IndexAddr:
 				// TODO: Model out-of-bounds panic
-				res, initMem = wrapPointers(val.X, -2)
+				res, initMem = wrapPointers(val.X, loc.AINDEX)
 				mops = L.MemOps(initMem)
 
 				if res.PointerValue().Empty() && succs.Size() > 0 {
@@ -1059,12 +1117,12 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 					))
 
 					// Return a wrapped pointer to the element.
-					res = Elements().AbstractPointerV(loc.FieldLocation{Base: allocSite, Index: -2})
+					res = Elements().AbstractPointerV(loc.NewArrayElementLocation(allocSite))
 				}
 
 			case *ssa.Index:
 				// TODO: Model out-of-bounds panic
-				res = evalSSA(initMem, val.X).StructValue().Get(-2).AbstractValue()
+				res = evalSSA(initMem, val.X).ArrayElementValue()
 
 			case *ssa.Slice:
 				res = evalSSA(initMem, val.X)
@@ -1125,8 +1183,8 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 			v, mem := swapWildcard(initMem, insn.Map)
 			initMem = mem
 			maps := v.PointerValue()
-			keyV := evaluateSSA(g, initMem, insn.Key)
-			valV := evaluateSSA(g, initMem, insn.Value)
+			keyV := EvaluateSSA(g, initMem, insn.Key)
+			valV := EvaluateSSA(g, initMem, insn.Value)
 
 			maps = maps.FilterNilCB(func() {
 				succs = succs.Update(cl.Panic(), initState)
@@ -1149,12 +1207,12 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 			var rval L.AbstractValue
 
 			if len(insn.Results) == 1 {
-				rval = evaluateSSA(g, initMem, insn.Results[0])
+				rval = EvaluateSSA(g, initMem, insn.Results[0])
 			} else {
 				// Make tuple
 				bindings := make(map[interface{}]L.Element)
 				for i, res := range insn.Results {
-					bindings[i] = evaluateSSA(g, initMem, res)
+					bindings[i] = EvaluateSSA(g, initMem, res)
 				}
 
 				rval = Elements().AbstractStruct(bindings)
@@ -1182,7 +1240,7 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 			singleUpd(updatePhiNodes(bl, bl.Succs[0]))
 
 		case *ssa.If:
-			condV := evaluateSSA(g, initMem, insn.Cond).BasicValue()
+			condV := EvaluateSSA(g, initMem, insn.Cond).BasicValue()
 
 			bl := insn.Block()
 			// Hacking our way around...
@@ -1254,7 +1312,7 @@ func (s *AbsConfiguration) singleSilent(C AnalysisCtxt, g defs.Goro, cl defs.Ctr
 				for i, op := range n.Instruction().Operands([]*ssa.Value{}) {
 					v = *op
 					log.Printf("Operand %d is %s of type %s", i, v, v.Type())
-					av := evaluateSSA(g, initMem, v)
+					av := EvaluateSSA(g, initMem, v)
 					log.Println("Has abstract value", av)
 
 					if av.IsPointer() {

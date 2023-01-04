@@ -48,37 +48,15 @@ func runWholeProgTest(
 	})
 }
 
-func runTest(
-	t *testing.T,
-	loadRes tu.LoadResult,
-	fun absIntCommTestFunc,
-	prep func(tu.LoadResult) AnalysisCtxt) {
-	nmgr := func() tu.NotesManager {
-		defer func() {
-			if err := recover(); err != nil {
-				t.Errorf("Panic while building notes...\n%v\n%s\n", err, debug.Stack())
-			}
-		}()
-
-		return tu.MakeNotesManager(t, loadRes)
-	}()
-
-	defer func() {
-		if err := recover(); err != nil {
-			t.Errorf("Panic while analyzing...\n%v\n%s\n", err, debug.Stack())
-		}
-	}()
-
-	C := prep(loadRes)
-	S, result := StaticAnalysis(C)
-
-	t.Logf("Abstract configuration graph contains %d superlocations.", result.Size())
-
-	// Compute some stats on how many superlocations we visit out of the total possible
+// Return the number of visited synchronizing superlocations and the
+// (theoretical) maximum possible synchronizing superlocations
+// (computed as the product between number of synchronizing control locations
+// for each thread).
+func computeSynchronizingSuperlocStats(C AnalysisCtxt, S SuperlocGraph, result L.Analysis) (visited, possible int) {
 	goroToClCount := utils.NewImmMap[defs.Goro, *immutable.Map[defs.CtrLoc, int]]()
-	visited := 0
+	visited = 0
 	S.ForEach(func(conf *AbsConfiguration) {
-		if conf.IsPanicked() || !conf.IsSynchronizing(C, result.GetUnsafe(conf.Superlocation())) {
+		if conf.IsPanicked() || !conf.IsCommunicating(C, result.GetUnsafe(conf.Superloc)) {
 			return
 		}
 
@@ -115,11 +93,48 @@ func runTest(
 			totalPossible *= myPossible
 		}
 
-		t.Logf("Visited %d/%d (%.2f%%) of all possible synchronizing superlocations",
-			visited, totalPossible, (float64(visited)*100)/float64(totalPossible))
-	} else {
-		t.Log("Visited 0 synchronizing superlocations")
+		possible = totalPossible
 	}
+
+	return
+}
+
+func runTest(
+	t *testing.T,
+	loadRes tu.LoadResult,
+	fun absIntCommTestFunc,
+	prep func(tu.LoadResult) AnalysisCtxt) {
+	nmgr := func() tu.NotesManager {
+		defer func() {
+			if err := recover(); err != nil {
+				t.Errorf("Panic while building notes...\n%v\n%s\n", err, debug.Stack())
+			}
+		}()
+
+		return tu.MakeNotesManager(t, loadRes)
+	}()
+
+	defer func() {
+		if err := recover(); err != nil {
+			t.Errorf("Panic while analyzing...\n%v\n%s\n", err, debug.Stack())
+		}
+	}()
+
+	C := prep(loadRes)
+	S, result := StaticAnalysis(C)
+
+	opts.OnVerbose(func() {
+		t.Logf("Abstract configuration graph contains %d superlocations.", result.Size())
+
+		// Compute some stats on how many superlocations we visit out of the total possible
+		visited, totalPossible := computeSynchronizingSuperlocStats(C, S, result)
+		if visited > 0 {
+			t.Logf("Visited %d/%d (%.2f%%) of all possible synchronizing superlocations",
+				visited, totalPossible, (float64(visited)*100)/float64(totalPossible))
+		} else {
+			t.Log("Visited 0 synchronizing superlocations")
+		}
+	})
 
 	if fun != nil {
 		fun(t, C, result, S, nmgr)
@@ -311,6 +326,64 @@ func TestStaticAnalysis(t *testing.T) {
 				close(ch)
 			}`,
 			nil,
+		}, {
+			"chan-len-nil",
+			`func main() {
+					var ch chan int
+					// The length of ch is used as the capacity of ch2,
+					// so that the result of len can be queried.
+					ch2 := make(chan int, len(ch)) ` + at(ann.Chan(ch1)) + `
+					ch2 <- 0 ` + at(ann.ChanQuery(ch1, tu.QRY_CAP, 0)) + `
+				}`,
+			ChannelValueQueryTests,
+		}, {
+			"chan-len-0",
+			`func main() {
+					ch := make(chan int)
+					// The length of ch is used as the capacity of ch2,
+					// so that the result of len can be queried.
+					ch2 := make(chan int, len(ch)) ` + at(ann.Chan(ch1)) + `
+					ch2 <- 0 ` + at(ann.ChanQuery(ch1, tu.QRY_CAP, 0)) + `
+				}`,
+			ChannelValueQueryTests,
+		}, {
+			"chan-len-1",
+			`func main() {
+				ch := make(chan int, 1)
+				ch <- 0
+				// The length of ch is used as the capacity of ch2,
+				// so that the result of len can be queried.
+				ch2 := make(chan int, len(ch)) ` + at(ann.Chan(ch1)) + `
+				ch2 <- 0 ` + at(ann.ChanQuery(ch1, tu.QRY_CAP, 1)) + `
+			}`,
+			ChannelValueQueryTests,
+		}, {
+			"chan-len-2",
+			`func main() {
+				ch := make(chan int, 2)
+				ch <- 1
+				ch <- 1
+				// The length of ch is used as the capacity of ch2,
+				// so that the result of len can be queried.
+				ch2 := make(chan int, len(ch)) ` + at(ann.Chan(ch1)) + `
+				ch2 <- 0 ` + at(ann.ChanQuery(ch1, tu.QRY_CAP, 2)) + `
+			}`,
+			ChannelValueQueryTests,
+		}, {
+			"chan-len-top",
+			`func ubool() bool
+
+			func main() {
+				ch := make(chan int, 1)
+				if ubool() {
+					ch <- 1
+				}
+				// The length of ch is used as the capacity of ch2,
+				// so that the result of len can be queried.
+				ch2 := make(chan int, len(ch)) ` + at(ann.Chan(ch1)) + `
+				ch2 <- 0 ` + at(ann.ChanQuery(ch1, tu.QRY_CAP, "top")) + `
+			}`,
+			ChannelValueQueryTests,
 		}, {
 			"gowner-test",
 			at(ann.Goro(goro(1), true, root, go1)) + `

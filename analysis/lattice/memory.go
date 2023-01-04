@@ -10,11 +10,13 @@ import (
 	"github.com/cs-au-dk/goat/utils/tree"
 )
 
-// TODO: Update memory lattice?
+// MemoryLattice represents the lattice of abstract memory.
+// Its members are maps binding abstract heap locations to abstract values.
 type MemoryLattice struct {
 	mapLatticeBase
 }
 
+// Eq checks for equality with another lattice.
 func (m *MemoryLattice) Eq(o Lattice) bool {
 	switch o := o.(type) {
 	case *MemoryLattice:
@@ -28,38 +30,53 @@ func (m *MemoryLattice) Eq(o Lattice) bool {
 	}
 }
 
+// Top is unsupported for the memory lattice.
 func (m *MemoryLattice) Top() Element {
 	panic(errUnsupportedOperation)
 }
 
+// Memory can safely convert the memory lattice.s
 func (m *MemoryLattice) Memory() *MemoryLattice {
 	return m
 }
 
+// memoryLattice is a singleton instantiation of the memory lattice.
 var memoryLattice = &MemoryLattice{mapLatticeBase{rng: valueLattice}}
 
+// Memory creates the memory lattice.
 func (latticeFactory) Memory() *MemoryLattice {
 	return memoryLattice
 }
 
+// addressableLocationHasher is a hasher for addressable locations,
+// which are keys in abstract memory values.
 type addressableLocationHasher loc.LocationHasher
 
+// Hash computes a 32-bit hash from a given addressable location.
 func (addressableLocationHasher) Hash(l loc.AddressableLocation) uint32 {
 	return l.Hash()
 }
+
+// Equal compares two addressable location for equality.
 func (addressableLocationHasher) Equal(a, b loc.AddressableLocation) bool {
 	return a.Equal(b)
 }
 
+// allocationSiteLocationHasher is a hasher for allocation site locations,
+// which are keys in abstract memory values.
 type allocationSiteLocationHasher loc.LocationHasher
 
+// Hash computes a 32-bit hash from a given allocation site.
 func (allocationSiteLocationHasher) Hash(l loc.AllocationSiteLocation) uint32 {
 	return l.Hash()
 }
+
+// Equal two allocation site locations for equality.
 func (s allocationSiteLocationHasher) Equal(a, b loc.AllocationSiteLocation) bool {
 	return a.Equal(b)
 }
 
+// Bot computes the ⊥ memory value.
 func (m *MemoryLattice) Bot() Element {
 	el := element{lattice: memoryLattice}
 	return Memory{
@@ -70,15 +87,18 @@ func (m *MemoryLattice) Bot() Element {
 	}
 }
 
-/* Lattice boilerplate */
 func (m *MemoryLattice) String() string {
 	return colorize.Lattice("Memory")
 }
 
+// Memory creates a fresh abstract memory
 func (elementFactory) Memory() Memory {
 	return memoryLattice.Bot().Memory()
 }
 
+// Memory is a member of the abstract memory lattice.
+// It contains two abstract heaps, one for allocation sites
+// and one for addressable locations.
 type Memory struct {
 	element
 	// Indicates whether the allocation site has been allocated once (bot) or more (top).
@@ -87,9 +107,10 @@ type Memory struct {
 	values tree.Tree[loc.AddressableLocation, AbstractValue]
 }
 
-// Inserts the key value mapping into the tree, preserving the internal tree
+// internalInsert inserts the key value mapping into the tree, preserving the internal tree
 // structure when the mapping already exists.
-// Also properly handles weak updates for allocation sites that have ALLOC = ⊤.
+// Also properly handles weak updates for multi-allocated allocation sites
+// i.e., where ALLOC = ⊤.
 func (w Memory) internalInsert(
 	key loc.AddressableLocation,
 	value AbstractValue,
@@ -105,9 +126,9 @@ func (w Memory) internalInsert(
 	})
 }
 
-// Update memory, preventing the insertion of keys which are already
+// updateTopPreserving updates memory, bypreventing the insertion of keys which are already
 // represented by a top location. Also provides special handling of top
-// locations. Provide the key, value, and a fallback memory update function
+// locations. Requires the key, value, and a fallback memory update function.
 func (m Memory) updateTopPreserving(key loc.AddressableLocation, elem AbstractValue, fallback func() Memory) Memory {
 	// NOTE (O): The code below assumes that writes that should be
 	// redirected to top locations will have no effect on the memory, as the
@@ -146,7 +167,6 @@ func (m Memory) updateTopPreserving(key loc.AddressableLocation, elem AbstractVa
 
 			// TODO: If we want we can try to remove `key` from the memory, as
 			// it will never be looked up at this point.
-
 			return m
 		}
 	}
@@ -154,6 +174,7 @@ func (m Memory) updateTopPreserving(key loc.AddressableLocation, elem AbstractVa
 	return fallback()
 }
 
+// Get retrieves the abstract value at an addressable location.
 func (m Memory) Get(key loc.AddressableLocation) (AbstractValue, bool) {
 	// First determine whether a top location represents the same allocation site.
 	if rep, hasRep := representative(key); hasRep {
@@ -168,6 +189,8 @@ func (m Memory) Get(key loc.AddressableLocation) (AbstractValue, bool) {
 	return Consts().BotValue(), false
 }
 
+// GetOrDefault retrieves the abstract value at an addressable location, or a given
+// default value if not found.
 func (w Memory) GetOrDefault(key loc.AddressableLocation, dflt AbstractValue) AbstractValue {
 	if v, found := w.Get(key); found {
 		return v
@@ -175,6 +198,8 @@ func (w Memory) GetOrDefault(key loc.AddressableLocation, dflt AbstractValue) Ab
 	return dflt
 }
 
+// GetUnsafe retrieves the abstract value at an addressable location.
+// Will throw a fatal exception if the location was not found.
 func (w Memory) GetUnsafe(key loc.AddressableLocation) AbstractValue {
 	if v, found := w.Get(key); found {
 		return v
@@ -184,6 +209,9 @@ func (w Memory) GetUnsafe(key loc.AddressableLocation) AbstractValue {
 	panic("Unreachable")
 }
 
+// IsMultialloc checks whether a given allocation site was allocated
+// multiple times. Non-allocation site addressable locations are not
+// multi-allocated by default.
 func (w Memory) IsMultialloc(key loc.AddressableLocation) bool {
 	if l, isAllocSite := key.(loc.AllocationSiteLocation); !isAllocSite {
 		return false
@@ -193,6 +221,7 @@ func (w Memory) IsMultialloc(key loc.AddressableLocation) bool {
 	}
 }
 
+// Update takes memory `w` and key `l` and value `v` and returns `w[l ↦ v]`.
 func (w Memory) Update(key loc.AddressableLocation, value AbstractValue) Memory {
 	// Ensure that the update is over-approximates soundly in the presence of
 	// top locations
@@ -202,6 +231,7 @@ func (w Memory) Update(key loc.AddressableLocation, value AbstractValue) Memory 
 	})
 }
 
+// Allocate returns the memory updated at the given allocation site as key with the abstract value.
 func (w Memory) Allocate(key loc.AllocationSiteLocation, value AbstractValue, forceMultialloc bool) Memory {
 	return w.updateTopPreserving(key, value, func() Memory {
 		prevFlag, found := w.allocs.Lookup(key)
@@ -216,10 +246,12 @@ func (w Memory) Allocate(key loc.AllocationSiteLocation, value AbstractValue, fo
 	})
 }
 
+// ForEach executes the given procedure over all addressable locations.
 func (w Memory) ForEach(f func(loc.AddressableLocation, AbstractValue)) {
 	w.values.ForEach(f)
 }
 
+// Remove computes the abstract memory where the given key has been unbound.
 func (w Memory) Remove(key loc.AddressableLocation) Memory {
 	w.values = w.values.Remove(key)
 
@@ -229,44 +261,37 @@ func (w Memory) Remove(key loc.AddressableLocation) Memory {
 	return w
 }
 
-/*
-func (w Memory) Find(f func(loc.AddressableLocation, AbstractValue) bool) (zk loc.AddressableLocation, zv AbstractValue, b bool) {
-	k, e, found := w.base.Find(func(k interface{}, e Element) bool {
-		return f(k.(loc.AddressableLocation), e.(AbstractValue))
-	})
-	if found {
-		return k.(loc.AddressableLocation), e.(AbstractValue), true
-	}
-	return zk, zv, b
-}
-*/
-
-// Lattice element methods
+// Leq computes m ⊑ o. Performs lattice dynamic type checking.
 func (w Memory) Leq(e Element) bool {
 	checkLatticeMatch(w.lattice, e.Lattice(), "⊑")
 	return w.leq(e)
 }
 
+// leq computes m ⊑ o.
 func (w Memory) leq(e Element) bool {
 	// a ⊑ b ⇔ a ⊔ b == b
 	return w.MonoJoin(e.(Memory)).eq(e)
 }
 
+// Geq computes m ⊒ o. Performs lattice dynamic type checking.
 func (w Memory) Geq(e Element) bool {
 	checkLatticeMatch(w.lattice, e.Lattice(), "⊒")
 	return w.geq(e)
 }
 
+// geq computes m ⊒ o.
 func (w Memory) geq(e Element) bool {
 	// OBS: a ⊑ b ⇔ b ⊒ a
 	return e.(Memory).leq(w)
 }
 
+// Eq computes m = o. Performs lattice dynamic type checking.
 func (w Memory) Eq(e Element) bool {
 	checkLatticeMatch(w.lattice, e.Lattice(), "=")
 	return w.eq(e)
 }
 
+// eq computes m = o.
 func (w Memory) eq(e Element) bool {
 	o := e.(Memory)
 	return w.values.Equal(o.values, func(a, b AbstractValue) bool {
@@ -276,15 +301,18 @@ func (w Memory) eq(e Element) bool {
 	})
 }
 
+// Join computes m ⊔ o. Performs lattice dynamic type checking.
 func (w Memory) Join(o Element) Element {
 	checkLatticeMatch(w.lattice, o.Lattice(), "⊔")
 	return w.join(o)
 }
 
+// join computes m ⊔ o.
 func (w Memory) join(o Element) Element {
 	return w.MonoJoin(o.(Memory))
 }
 
+// MonoJoin is a monomorphic variant of m ⊔ o for abstract memory.
 func (w Memory) MonoJoin(o Memory) Memory {
 	w.values = w.values.Merge(o.values, func(av, bv AbstractValue) (AbstractValue, bool) {
 		if av.eq(bv) {
@@ -299,10 +327,12 @@ func (w Memory) MonoJoin(o Memory) Memory {
 	return w
 }
 
+// Meet computes m ⊓ o. Performs lattice dynamic type checking.
 func (w Memory) Meet(o Element) Element {
 	panic(errUnsupportedOperation)
 }
 
+// meet computes m ⊓ o.
 func (w Memory) meet(o Element) Element {
 	panic(errUnsupportedOperation)
 }
@@ -328,12 +358,12 @@ func (w Memory) String() string {
 		i.Indenter().Start("{").NestStrings(buf...).End("}")
 }
 
-// Type conversion
+// Memory can safely be converted to memory.
 func (w Memory) Memory() Memory {
 	return w
 }
 
-// Updates memory to have a list of locations bound to top values
+// InjectTopValues updates memory to have a list of locations bound to top values
 func (mem Memory) InjectTopValues(locs ...loc.AddressableLocation) Memory {
 	for _, l := range locs {
 		mem.values = mem.internalInsert(l, TopValueForType(l.Type()))
@@ -342,6 +372,8 @@ func (mem Memory) InjectTopValues(locs ...loc.AddressableLocation) Memory {
 	return mem
 }
 
+// Filter retrieves the abstract memory where only the location-abstract value
+// pairs satisfying the given predicate are included.
 func (mem Memory) Filter(pred func(loc.AddressableLocation, AbstractValue) bool) Memory {
 	fresh := Elements().Memory()
 
@@ -354,6 +386,7 @@ func (mem Memory) Filter(pred func(loc.AddressableLocation, AbstractValue) bool)
 	return fresh
 }
 
+// Channels retrieves all the channels in the abstract memory.
 func (mem Memory) Channels() Memory {
 	return mem.Filter(func(al loc.AddressableLocation, av AbstractValue) bool {
 		return av.IsChan()

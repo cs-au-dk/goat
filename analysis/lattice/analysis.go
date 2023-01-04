@@ -9,10 +9,12 @@ import (
 	i "github.com/cs-au-dk/goat/utils/indenter"
 )
 
-//go:generate go run generate-map.go Analysis defs.Superloc AnalysisState
+//go:generate go run generate-map.go analysis
 
+// analysisLattice is a singleton instantiation of the analysis result lattice.
 var analysisLattice = &AnalysisLattice{mapLatticeBase{rng: analysisStateLattice}}
 
+// Analysis yields the analysis result lattice.
 func (latticeFactory) Analysis() *AnalysisLattice {
 	return analysisLattice
 }
@@ -29,14 +31,19 @@ func (a *AnalysisLattice) String() string {
 	return colorize.Lattice("Superloc") + " → " + a.rng.String()
 }
 
+// Analysis yields the ⊥ analysis result.
 func (elementFactory) Analysis() Analysis {
 	return analysisLattice.Bot().Analysis()
 }
 
+// GetOrBot yields the analysis state bound at the given superlocation,
+// defaulting to ⊥ if not found.
 func (a Analysis) GetOrBot(sl defs.Superloc) AnalysisState {
 	return a.GetOrDefault(sl, analysisStateLattice.Bot().AnalysisState())
 }
 
+// ProjectMemory projects only the abstract memory component of the analysis state at
+// each superlocation not bound to ⊥.
 func (a Analysis) ProjectMemory() string {
 	buf := make([]func() string, 0, a.Size())
 	a.ForEach(func(s defs.Superloc, as AnalysisState) {
@@ -48,6 +55,8 @@ func (a Analysis) ProjectMemory() string {
 	return i.Indenter().Start(a.Lattice().String() + ": {").NestThunked(buf...).End("}")
 }
 
+// ChanMemory returns only the channel-related segment of the abstract memory at
+// every bound superlocation.
 func (a Analysis) ChanMemory() string {
 	buf := make([]func() string, 0, a.Size())
 	a.ForEach(func(s defs.Superloc, as AnalysisState) {

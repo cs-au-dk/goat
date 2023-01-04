@@ -239,7 +239,6 @@ func TestPointerEqualityAfterMerge(t *testing.T) {
 	}
 }
 
-
 func TestManyMerge(t *testing.T) {
 	hit, _ := mkTest(t)
 	iterations := 100

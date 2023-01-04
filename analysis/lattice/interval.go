@@ -6,18 +6,20 @@ import (
 	"strconv"
 )
 
+// Interval is an interval and a member of the interval lattice.
+// Any interval consists two interval bounds, `low` and `high`.
 type Interval struct {
 	element
 	low  IntervalBound
 	high IntervalBound
 }
 
-// Create interval with possibly infinite bounds.
+// Interval creates an interval with possibly infinite bounds.
 func (elementFactory) Interval(low IntervalBound, high IntervalBound) Interval {
 	return Interval{low: low, high: high}
 }
 
-// Create interval with finite bounds.
+// IntervalFinite creates an interval with finite bounds.
 func (elementFactory) IntervalFinite(low int, high int) Interval {
 	return Interval{
 		low:  FiniteBound(low),
@@ -25,6 +27,7 @@ func (elementFactory) IntervalFinite(low int, high int) Interval {
 	}
 }
 
+// Lattice retrieves the interval lattice for any interval.
 func (Interval) Lattice() Lattice {
 	return intervalLattice
 }
@@ -38,6 +41,12 @@ func (e Interval) String() string {
 	return "[" + e.low.String() + ", " + e.high.String() + "]"
 }
 
+// Height returns the height of the interval in the interval lattice.
+// The height is computed as the difference between the high and low bounds,
+// if both are finite, or -1 otherwise:
+//
+//	[c1, c2] = c2 - c1, if c1, c2 ∈ ℤ
+//	[c1, c2] = -1, if c1 = ±∞  v  c2 = ±∞
 func (e Interval) Height() int {
 	// Compromise: unknown intervals are represented as height -1
 	l, lok := e.low.(FiniteBound)
@@ -48,32 +57,39 @@ func (e Interval) Height() int {
 	return int(math.Max(0, float64(h-l)))
 }
 
+// Interval safely converts an interval.
 func (e Interval) Interval() Interval {
 	return e
 }
 
+// IsBot checks that the interval is equal to ⊥ = [∞, -∞].
 func (e Interval) IsBot() bool {
 	return e == intervalLattice.Bot().Interval()
 }
 
+// IsBot checks that the interval is equal to ⊥ = [-∞, ∞].
 func (e Interval) IsTop() bool {
 	return e == intervalLattice.Top().Interval()
 }
 
+// Eq computes m = o. Performs lattice dynamic type checking.
 func (e1 Interval) Eq(e2 Element) bool {
 	checkLatticeMatch(e1.Lattice(), e2.Lattice(), "=")
 	return e1.eq(e2)
 }
 
+// eq computes m = o.
 func (e1 Interval) eq(e2 Element) bool {
 	return e1.leq(e2) && e1.geq(e2)
 }
 
+// Leq computes m ⊑ o. Performs lattice dynamic type checking.
 func (e1 Interval) Leq(e2 Element) bool {
 	checkLatticeMatch(e1.Lattice(), e2.Lattice(), "⊑")
 	return e1.leq(e2)
 }
 
+// leq computes m ⊑ o.
 func (e1 Interval) leq(e2 Element) bool {
 	switch e2 := e2.(type) {
 	case Interval:
@@ -82,16 +98,17 @@ func (e1 Interval) leq(e2 Element) bool {
 		return false
 	case *DroppedTop:
 		return true
-	default:
-		panic(errInternal)
 	}
+	panic(errInternal)
 }
 
+// Geq computes m ⊒ o. Performs lattice dynamic type checking.
 func (e1 Interval) Geq(e2 Element) bool {
 	checkLatticeMatch(e1.Lattice(), e2.Lattice(), "⊒")
 	return e1.geq(e2)
 }
 
+// geq computes m ⊒ o.
 func (e1 Interval) geq(e2 Element) bool {
 	switch e2 := e2.(type) {
 	case Interval:
@@ -100,16 +117,19 @@ func (e1 Interval) geq(e2 Element) bool {
 		return true
 	case *DroppedTop:
 		return false
-	default:
-		panic(errInternal)
 	}
+	panic(errInternal)
 }
 
+// Join computes m ⊔ o. Performs lattice dynamic type checking.
 func (e1 Interval) Join(e2 Element) Element {
 	checkLatticeMatch(e1.Lattice(), e2.Lattice(), "⊔")
 	return e1.join(e2)
 }
 
+// join computes m ⊔ o.
+// The resulting interval takes the lowest of the lower bounds,
+// and the highest of the upper bounds.
 func (e1 Interval) join(e2 Element) Element {
 	switch e2 := e2.(type) {
 	case Interval:
@@ -129,16 +149,17 @@ func (e1 Interval) join(e2 Element) Element {
 		return e1
 	case *DroppedTop:
 		return e2
-	default:
-		panic(errInternal)
 	}
+	panic(errInternal)
 }
 
+// Meet computes m ⊓ o. Performs lattice dynamic type checking.
 func (e1 Interval) Meet(e2 Element) Element {
 	checkLatticeMatch(e1.Lattice(), e2.Lattice(), "⊓")
 	return e1.meet(e2)
 }
 
+// meet computes m ⊓ o.
 func (e1 Interval) meet(e2 Element) Element {
 	switch e2 := e2.(type) {
 	case Interval:
@@ -159,19 +180,17 @@ func (e1 Interval) meet(e2 Element) Element {
 		// l2 <= l1 <= h2 <= h1
 		case e1.low.Geq(e2.low) && e1.high.Geq(e2.high):
 			return Interval{low: e1.low, high: e2.high}
-		default:
-			panic(errInternal)
 		}
+		panic(errInternal)
 	case *LiftedBot:
 		return e2
 	case *DroppedTop:
 		return e1
-	default:
-		panic(errInternal)
 	}
+	panic(errInternal)
 }
 
-// If bounds are finite, retrieve them. Otherwise panic.
+// GetFiniteBounds unpacks the interval bounds, if finite, and panics otherwise.
 func (i Interval) GetFiniteBounds() (int, int) {
 	if i.low.IsInfinite() || i.high.IsInfinite() {
 		panic(fmt.Sprintf("Interval %s does not have finite bounds", i))
@@ -179,7 +198,7 @@ func (i Interval) GetFiniteBounds() (int, int) {
 	return (int)(i.low.(FiniteBound)), (int)(i.high.(FiniteBound))
 }
 
-// Return the lower bound as an integer, if finite. Otherwise, panic.
+// Low return the lower bound as an integer, if finite, and panics otherwise.
 func (i Interval) Low() int {
 	if i.low.IsInfinite() {
 		panic(fmt.Sprintf("Interval %s does not have finite lower bound", i))
@@ -187,7 +206,7 @@ func (i Interval) Low() int {
 	return (int)(i.low.(FiniteBound))
 }
 
-// Return the upper bound as an integer, if finite. Otherwise, panic.
+// High returns the upper bound as an integer, if finite, and panics otherwise.
 func (i Interval) High() int {
 	if i.high.IsInfinite() {
 		panic(fmt.Sprintf("Interval %s does not have finite upper bound", i))
@@ -195,32 +214,144 @@ func (i Interval) High() int {
 	return (int)(i.high.(FiniteBound))
 }
 
+// IntervalBound is an interface implemented by all interval lattice bounds i.e.,
+// any FiniteBound value, PlusInfinity and MinusInfinity.
 type IntervalBound interface {
 	String() string
 
-	// Predicates
+	// IsInfinite checks whether the interval bound is finite.
 	IsInfinite() bool
 
-	// Binary relations
+	// BINARY RELATIONS
+
+	// Eq checks for interval bound equality.
 	Eq(IntervalBound) bool
+	// Leq computes b1 ≤ b2. The semantics is -∞ ≤ c ≤ ∞, where c ∈ ℤ.
 	Leq(IntervalBound) bool
+	// Geq computes b1 ≥ b2. The semantics is ∞ ≥ c ≥ -∞, where c ∈ ℤ.
 	Geq(IntervalBound) bool
+	// Lt computes b1 < b2. The semantics is -∞ < c < ∞, where c ∈ ℤ.
 	Lt(IntervalBound) bool
+	// Gt computes b1 < b2. The semantics is -∞ < c < ∞, where c ∈ ℤ.
 	Gt(IntervalBound) bool
 
-	// Binary operations
+	// BINARY OPERATIONS
+
+	// Plus computes b1 + b2. The semantics of plus is:
+	//	.-----------------------------.
+	// 	|   b1   |   b2   |  b1 ⨣ b2  |
+	// 	|========|========|===========|
+	// 	|  ∈  ℤ  |  ∈  ℤ  |  b1 + b2  |
+	// 	|--------|--------|-----------|
+	// 	|  ∈  ℤ  |    ∞   |     ∞     |
+	// 	|--------|--------|-----------|
+	// 	|  ∈  ℤ  |   -∞   |    -∞     |
+	// 	|--------|--------|-----------|
+	// 	|   -∞   |   -∞   |    -∞     |
+	// 	|--------|--------|-----------|
+	// 	|    ∞   |    ∞   |     ∞     |
+	// 	|--------|--------|-----------|
+	// 	|    ∞   |   -∞   |   panic   |
+	// 	 -----------------------------
 	Plus(IntervalBound) IntervalBound
+
+	// Minus computes b1 - b2. The semantics of minus is:
+	//	.-----------------------------.
+	// 	|   b1   |   b2   |  b1 - b2  |
+	// 	|========|========|===========|
+	// 	|  ∈  ℤ  |  ∈  ℤ  |  b1 - b2  |
+	// 	|--------|--------|-----------|
+	// 	|  ∈  ℤ  |    ∞   |    -∞     |
+	// 	|--------|--------|-----------|
+	// 	|    ∞   |  ∈  ℤ  |     ∞     |
+	// 	|--------|--------|-----------|
+	// 	|  ∈  ℤ  |   -∞   |     ∞     |
+	// 	|--------|--------|-----------|
+	// 	|   -∞   |  ∈  ℤ  |    -∞     |
+	// 	|--------|--------|-----------|
+	// 	|   -∞   |   -∞   |   panic   |
+	// 	|--------|--------|-----------|
+	// 	|    ∞   |   -∞   |     ∞     |
+	// 	|--------|--------|-----------|
+	// 	|   -∞   |    ∞   |    -∞     |
+	// 	|--------|--------|-----------|
+	// 	|    ∞   |    ∞   |   panic   |
+	// 	 -----------------------------
 	Minus(IntervalBound) IntervalBound
+
+	// Mult computes b1 * b2. The semantics of multiplication is:
+	//	.-----------------------------.
+	// 	|   b1   |   b2   |  b1 * b2  |
+	// 	|========|========|===========|
+	// 	|  ∈  ℤ  |  ∈  ℤ  |  b1 * b2  |
+	// 	|--------|--------|-----------|
+	// 	|  ∈  ℤ+ |    ∞   |     ∞     |
+	// 	|--------|--------|-----------|
+	// 	|  ∈  ℤ+ |   -∞   |    -∞     |
+	// 	|--------|--------|-----------|
+	// 	|  ∈  ℤ- |   -∞   |     ∞     |
+	// 	|--------|--------|-----------|
+	// 	|  ∈  ℤ- |    ∞   |    -∞     |
+	// 	|--------|--------|-----------|
+	// 	|    ∞   |    ∞   |     ∞     |
+	// 	|--------|--------|-----------|
+	// 	|   -∞   |   -∞   |     ∞     |
+	// 	|--------|--------|-----------|
+	// 	|    ∞   |   -∞   |   panic   |
+	// 	|--------|--------|-----------|
+	// 	|  (-)∞  |    0   |   panic   |
+	// 	 -----------------------------
 	Mult(IntervalBound) IntervalBound
+
+	// Div computes b1 / b2. The semantics of division is:
+	//	.-----------------------------.
+	// 	|   b1   |   b2   |  b1 / b2  |
+	// 	|========|========|===========|
+	// 	|  ∈ ℤ≠0 |  ∈ ℤ≠0 |  b1 / b2  |
+	// 	|--------|--------|-----------|
+	// 	|   -∞   |  ∈ ℤ≠0 |     -∞    |
+	// 	|--------|--------|-----------|
+	// 	|    ∞   |  ∈ ℤ≠0 |      ∞    |
+	// 	|--------|--------|-----------|
+	// 	|  ∈  ℤ  |  (-)∞  |     0     |
+	// 	|--------|--------|-----------|
+	// 	|  (-)∞  |  (-)∞  |   panic   |
+	// 	|--------|--------|-----------|
+	// 	|  ∀ b1  |    0   |   panic   |
+	// 	 -----------------------------
 	Div(IntervalBound) IntervalBound
+
+	// Max computes max(b1, b2). The semantics of maximum is:
+	//	.--------------------------------.
+	// 	|   b1   |   b2   | max(b1, b2)  |
+	// 	|========|========|==============|
+	// 	|  ∈  ℤ  |  ∈  ℤ  | max(b1, b2)  |
+	// 	|--------|--------|--------------|
+	// 	|  ∀ b1  |    ∞   |       ∞      |
+	// 	 --------------------------------
 	Max(IntervalBound) IntervalBound
+
+	// Min computes min(b1, b2). The semantics of minimum is:
+	//	.--------------------------------.
+	// 	|   b1   |   b2   | min(b1, b2)  |
+	// 	|========|========|==============|
+	// 	|  ∈  ℤ  |  ∈  ℤ  | min(b1, b2)  |
+	// 	|--------|--------|--------------|
+	// 	|  ∀ b1  |   -∞   |      -∞      |
+	// 	 --------------------------------
 	Min(IntervalBound) IntervalBound
 }
 
-type FiniteBound int
-type PlusInfinity struct{}
-type MinusInfinity struct{}
+type (
+	// FiniteBound is used to represent finite limits of an interval value.
+	FiniteBound int
+	// PlusInfinity represents ∞.
+	PlusInfinity struct{}
+	// MinusInfinity represents -∞.
+	MinusInfinity struct{}
+)
 
+// IsInfinite is false for the finite bound.
 func (FiniteBound) IsInfinite() bool {
 	return false
 }
@@ -229,15 +360,17 @@ func (b FiniteBound) String() string {
 	return colorize.Element(strconv.Itoa((int)(b)))
 }
 
+// Eq compares for equality with another bound. Two finite bounds
+// are equal if their underlying values are equal.
 func (b1 FiniteBound) Eq(b2 IntervalBound) bool {
 	switch b2 := b2.(type) {
 	case FiniteBound:
 		return b1 == b2
-	default:
-		return false
 	}
+	return false
 }
 
+// Leq computes b1 ≤ b2. The semantics is -∞ ≤ c ≤ ∞, where c ∈ ℤ.
 func (b1 FiniteBound) Leq(b2 IntervalBound) bool {
 	switch b2 := b2.(type) {
 	case FiniteBound:
@@ -250,6 +383,7 @@ func (b1 FiniteBound) Leq(b2 IntervalBound) bool {
 	return false
 }
 
+// Geq computes b1 ≥ b2. The semantics is ∞ ≥ c ≥ -∞, where c ∈ ℤ.
 func (b1 FiniteBound) Geq(b2 IntervalBound) bool {
 	switch b2 := b2.(type) {
 	case FiniteBound:
@@ -262,6 +396,7 @@ func (b1 FiniteBound) Geq(b2 IntervalBound) bool {
 	return false
 }
 
+// Lt computes b1 < b2. The semantics is -∞ < c < ∞, where c ∈ ℤ.
 func (b1 FiniteBound) Lt(b2 IntervalBound) bool {
 	switch b2 := b2.(type) {
 	case FiniteBound:
@@ -274,6 +409,7 @@ func (b1 FiniteBound) Lt(b2 IntervalBound) bool {
 	return false
 }
 
+// Gt computes b1 < b2. The semantics is -∞ < c < ∞, where c ∈ ℤ.
 func (b1 FiniteBound) Gt(b2 IntervalBound) bool {
 	switch b2 := b2.(type) {
 	case FiniteBound:
@@ -286,6 +422,17 @@ func (b1 FiniteBound) Gt(b2 IntervalBound) bool {
 	return false
 }
 
+// Plus computes b1 + b2. The semantics of plus is:
+//
+//	.--------------------.
+//	|   b2   |  b1 + b2  |
+//	|========|===========|
+//	|   ∈ ℤ  |  b1 + b2  |
+//	|--------|-----------|
+//	|    ∞   |     ∞     |
+//	|--------|-----------|
+//	|   -∞   |    -∞     |
+//	 --------------------
 func (b1 FiniteBound) Plus(b2 IntervalBound) IntervalBound {
 	switch b2 := b2.(type) {
 	case FiniteBound:
@@ -298,6 +445,17 @@ func (b1 FiniteBound) Plus(b2 IntervalBound) IntervalBound {
 	return nil
 }
 
+// Plus computes b1 - b2. The semantics of plus is:
+//
+//	.--------------------.
+//	|   b2   |  b1 - b2  |
+//	|========|===========|
+//	|   ∈ ℤ  |  b1 - b2  |
+//	|--------|-----------|
+//	|    ∞   |    -∞     |
+//	|--------|-----------|
+//	|   -∞   |     ∞     |
+//	 --------------------
 func (b1 FiniteBound) Minus(b2 IntervalBound) IntervalBound {
 	switch b2 := b2.(type) {
 	case FiniteBound:
@@ -310,6 +468,23 @@ func (b1 FiniteBound) Minus(b2 IntervalBound) IntervalBound {
 	return nil
 }
 
+// Mult computes b1 * b2. The semantics of multiplication is:
+//
+//	.-----------------------------.
+//	|   b1   |   b2   |  b1 * b2  |
+//	|========|========|===========|
+//	|  ∈  ℤ  |  ∈  ℤ  |  b1 * b2  |
+//	|--------|--------|-----------|
+//	|  ∈  ℤ+ |    ∞   |     ∞     |
+//	|--------|--------|-----------|
+//	|  ∈  ℤ+ |   -∞   |    -∞     |
+//	|--------|--------|-----------|
+//	|  ∈  ℤ- |   -∞   |     ∞     |
+//	|--------|--------|-----------|
+//	|  ∈  ℤ- |    ∞   |    -∞     |
+//	|--------|--------|-----------|
+//	|    0   |  (-)∞  |   panic   |
+//	 -----------------------------
 func (b1 FiniteBound) Mult(b2 IntervalBound) IntervalBound {
 	switch b2 := b2.(type) {
 	case FiniteBound:
@@ -336,6 +511,17 @@ func (b1 FiniteBound) Mult(b2 IntervalBound) IntervalBound {
 	return nil
 }
 
+// Div computes b1 / b2. The semantics of division is:
+//
+//	.-----------------------------.
+//	|   b1   |   b2   |  b1 / b2  |
+//	|========|========|===========|
+//	|  ∈ ℤ≠0 |  ∈ ℤ≠0 |  b1 / b2  |
+//	|--------|--------|-----------|
+//	|  ∈  ℤ  |  (-)∞  |     0     |
+//	|--------|--------|-----------|
+//	|  ∀ b1  |    0   |   panic   |
+//	 -----------------------------
 func (b1 FiniteBound) Div(b2 IntervalBound) IntervalBound {
 	switch b2 := b2.(type) {
 	case FiniteBound:
@@ -356,6 +542,17 @@ func (b1 FiniteBound) Div(b2 IntervalBound) IntervalBound {
 	return nil
 }
 
+// Max computes max(b1, b2). The semantics of maximum is:
+//
+//	.-----------------------.
+//	|   b2   | max(b1, b2)  |
+//	|========|==============|
+//	|  ∈  ℤ  | max(b1, b2)  |
+//	|--------|--------------|
+//	|   -∞   |      b1      |
+//	|--------|--------------|
+//	|    ∞   |      ∞       |
+//	 -----------------------
 func (b1 FiniteBound) Max(b2 IntervalBound) IntervalBound {
 	switch b2 := b2.(type) {
 	case FiniteBound:
@@ -371,6 +568,17 @@ func (b1 FiniteBound) Max(b2 IntervalBound) IntervalBound {
 	return nil
 }
 
+// Min computes min(b1, b2). The semantics of maximum is:
+//
+//	.-----------------------.
+//	|   b2   | min(b1, b2)  |
+//	|========|==============|
+//	|  ∈  ℤ  | min(b1, b2)  |
+//	|--------|--------------|
+//	|   -∞   |     -∞       |
+//	|--------|--------------|
+//	|    ∞   |      b1      |
+//	 -----------------------
 func (b1 FiniteBound) Min(b2 IntervalBound) IntervalBound {
 	switch b2 := b2.(type) {
 	case FiniteBound:
@@ -386,6 +594,7 @@ func (b1 FiniteBound) Min(b2 IntervalBound) IntervalBound {
 	return nil
 }
 
+// IsInfinite is true for ∞.
 func (PlusInfinity) IsInfinite() bool {
 	return true
 }
@@ -394,6 +603,7 @@ func (PlusInfinity) String() string {
 	return colorize.Element("∞")
 }
 
+// Eq checks for interval bound equality.
 func (PlusInfinity) Eq(b2 IntervalBound) bool {
 	switch b2.(type) {
 	case PlusInfinity:
@@ -402,6 +612,7 @@ func (PlusInfinity) Eq(b2 IntervalBound) bool {
 	return false
 }
 
+// Leq computes ∞ ≤ b.
 func (PlusInfinity) Leq(b2 IntervalBound) bool {
 	switch b2.(type) {
 	case PlusInfinity:
@@ -410,23 +621,36 @@ func (PlusInfinity) Leq(b2 IntervalBound) bool {
 	return false
 }
 
+// Geq computes ∞ ≥ b. It is always true as ∞ is the largest possible bound.
 func (PlusInfinity) Geq(IntervalBound) bool {
 	return true
 }
 
+// Geq computes ∞ < b. It is always false as ∞ is the largest possible bound.
 func (PlusInfinity) Lt(IntervalBound) bool {
 	return false
 }
 
+// Gt computes ∞ > b.
 func (PlusInfinity) Gt(b2 IntervalBound) bool {
 	switch b2.(type) {
 	case PlusInfinity:
 		return false
-	default:
-		return true
 	}
+	return true
 }
 
+// Plus computes ∞ + b. The semantics of plus is:
+//
+//	.---------------------.
+//	|    b    |   ∞ + b   |
+//	|=========|===========|
+//	|   ∈ ℤ   |     ∞     |
+//	|---------|-----------|
+//	|   -∞    |   panic   |
+//	|---------|-----------|
+//	|  	 ∞    |     ∞     |
+//	 ---------------------
 func (PlusInfinity) Plus(b2 IntervalBound) IntervalBound {
 	switch b2.(type) {
 	case MinusInfinity:
@@ -435,6 +659,19 @@ func (PlusInfinity) Plus(b2 IntervalBound) IntervalBound {
 	return PlusInfinity{}
 }
 
+// Minus computes ∞ - b. The semantics of minus is:
+//
+//	.----------=----------.
+//	|    b    |   ∞ - b   |
+//	|=========|===========|
+//	|  ∈ ℤ≠0  |     ∞     |
+//	|---------|-----------|
+//	|  	-∞    |     ∞     |
+//	|---------|-----------|
+//	|  	 ∞    |    -∞     |
+//	|---------|-----------|
+//	|    0    |   panic   |
+//	 ---------------------
 func (PlusInfinity) Minus(b2 IntervalBound) IntervalBound {
 	switch b2.(type) {
 	case PlusInfinity:
@@ -443,6 +680,19 @@ func (PlusInfinity) Minus(b2 IntervalBound) IntervalBound {
 	return PlusInfinity{}
 }
 
+// Mult computes ∞ * b. The semantics of minus is:
+//
+//	.----------=----------.
+//	|    b    |   ∞ * b   |
+//	|=========|===========|
+//	|   ∈ ℤ+  |     ∞     |
+//	|---------|-----------|
+//	|   ∈ ℤ-  |    -∞     |
+//	|---------|-----------|
+//	|  	 ∞    |     ∞     |
+//	|---------|-----------|
+//	|  0, -∞  |   panic   |
+//	 ---------------------
 func (PlusInfinity) Mult(b2 IntervalBound) IntervalBound {
 	switch b2 := b2.(type) {
 	case FiniteBound:
@@ -458,6 +708,17 @@ func (PlusInfinity) Mult(b2 IntervalBound) IntervalBound {
 	return PlusInfinity{}
 }
 
+// Div computes ∞ / b. The semantics of division is:
+//
+//	.--------------------.
+//	|    b   |   ∞ / b   |
+//	|========|===========|
+//	|  ∈ ℤ≠0 |     0     |
+//	|--------|-----------|
+//	|  (-)∞  |   panic   |
+//	|--------|-----------|
+//	|    0   |   panic   |
+//	 --------------------
 func (PlusInfinity) Div(b2 IntervalBound) IntervalBound {
 	switch b2.(type) {
 	case PlusInfinity:
@@ -468,14 +729,29 @@ func (PlusInfinity) Div(b2 IntervalBound) IntervalBound {
 	return PlusInfinity{}
 }
 
+// Max computes max(∞, b). The semantics of maximum is:
+//
+//	.----------------------.
+//	|   b   |   max(∞, b)  |
+//	|=======|==============|
+//	|  ∀ b  |      ∞       |
+//	 ----------------------
 func (PlusInfinity) Max(IntervalBound) IntervalBound {
 	return PlusInfinity{}
 }
 
+// Min computes min(∞, b). The semantics of minimum is:
+//
+//	.----------------------.
+//	|   b   |   min(∞, b)  |
+//	|=======|==============|
+//	|  ∀ b  |      b       |
+//	 ----------------------
 func (PlusInfinity) Min(b2 IntervalBound) IntervalBound {
 	return b2
 }
 
+// IsInfinite is true for -∞.
 func (MinusInfinity) IsInfinite() bool {
 	return true
 }
@@ -484,6 +760,7 @@ func (MinusInfinity) String() string {
 	return colorize.Element("-∞")
 }
 
+// Eq computes -∞ = b.
 func (MinusInfinity) Eq(b2 IntervalBound) bool {
 	switch b2.(type) {
 	case MinusInfinity:
@@ -492,10 +769,12 @@ func (MinusInfinity) Eq(b2 IntervalBound) bool {
 	return false
 }
 
+// Leq computes -∞ ≤ b. It is always true as -∞ is the smallest possible bound.
 func (MinusInfinity) Leq(IntervalBound) bool {
 	return true
 }
 
+// Geq computes -∞ ≥ b.
 func (MinusInfinity) Geq(b2 IntervalBound) bool {
 	switch b2.(type) {
 	case MinusInfinity:
@@ -504,6 +783,7 @@ func (MinusInfinity) Geq(b2 IntervalBound) bool {
 	return false
 }
 
+// Lt computes -∞ < b.
 func (MinusInfinity) Lt(b2 IntervalBound) bool {
 	switch b2.(type) {
 	case MinusInfinity:
@@ -512,33 +792,69 @@ func (MinusInfinity) Lt(b2 IntervalBound) bool {
 	return true
 }
 
+// Gt computes -∞ > b. It is always false as -∞ is the smallest possible bound.
 func (MinusInfinity) Gt(IntervalBound) bool {
 	return false
 }
 
-func (MinusInfinity) Plus(b2 IntervalBound) IntervalBound {
-	switch b2.(type) {
+// Plus computes -∞ + b. The semantics of plus is:
+//
+//	.---------------------.
+//	|    b    |  -∞ + b   |
+//	|=========|===========|
+//	|   ∈ ℤ   |    -∞     |
+//	|---------|-----------|
+//	|   -∞    |    -∞     |
+//	|---------|-----------|
+//	|  	 ∞    |   panic   |
+//	 ---------------------
+func (MinusInfinity) Plus(b IntervalBound) IntervalBound {
+	switch b.(type) {
 	case PlusInfinity:
 		panic("-∞ + ∞")
 	}
 	return MinusInfinity{}
 }
 
-func (MinusInfinity) Minus(b2 IntervalBound) IntervalBound {
-	switch b2.(type) {
+// Minus computes -∞ - b. The semantics of minus is:
+//
+//	.---------------------.
+//	|    b    |  -∞ - b   |
+//	|=========|===========|
+//	|   ∈ ℤ   |    -∞     |
+//	|---------|-----------|
+//	|  	-∞    |   panic   |
+//	|---------|-----------|
+//	|  	 ∞    |     ∞     |
+//	 ---------------------
+func (MinusInfinity) Minus(b IntervalBound) IntervalBound {
+	switch b.(type) {
 	case MinusInfinity:
 		panic("-∞ - (-∞)")
 	}
 	return MinusInfinity{}
 }
 
-func (MinusInfinity) Mult(b2 IntervalBound) IntervalBound {
-	switch b2 := b2.(type) {
+// Mult computes -∞ * b. The semantics of multiplication is:
+//
+//	.---------------------.
+//	|    b    |  -∞ * b   |
+//	|=========|===========|
+//	|   ∈ ℤ+  |    -∞     |
+//	|---------|-----------|
+//	|   ∈ ℤ-  |     ∞     |
+//	|---------|-----------|
+//	|  	-∞    |     ∞     |
+//	|---------|-----------|
+//	|  0, ∞   |   panic   |
+//	 ---------------------
+func (MinusInfinity) Mult(b IntervalBound) IntervalBound {
+	switch b := b.(type) {
 	case FiniteBound:
 		switch {
-		case b2 == 0:
+		case b == 0:
 			panic("-∞ * 0")
-		case b2 < 0:
+		case b < 0:
 			return PlusInfinity{}
 		}
 	case PlusInfinity:
@@ -549,10 +865,21 @@ func (MinusInfinity) Mult(b2 IntervalBound) IntervalBound {
 	return MinusInfinity{}
 }
 
-func (MinusInfinity) Div(b2 IntervalBound) IntervalBound {
-	switch b2 := b2.(type) {
+// Div computes -∞ / b. The semantics of division is:
+//
+//	.---------------------.
+//	|    b    |  -∞ / b   |
+//	|=========|===========|
+//	|  ∈ ℤ≠0  |    -∞     |
+//	|---------|-----------|
+//	|   (-)∞  |   panic   |
+//	|---------|-----------|
+//	|    0    |   panic   |
+//	 ---------------------
+func (MinusInfinity) Div(b IntervalBound) IntervalBound {
+	switch b := b.(type) {
 	case FiniteBound:
-		if b2 < 0 {
+		if b < 0 {
 			return PlusInfinity{}
 		}
 	case PlusInfinity:
@@ -563,10 +890,24 @@ func (MinusInfinity) Div(b2 IntervalBound) IntervalBound {
 	return MinusInfinity{}
 }
 
-func (MinusInfinity) Max(b2 IntervalBound) IntervalBound {
-	return b2
+// Max computes max(-∞, b). The semantics of maximum is:
+//
+//	.----------------------.
+//	|   b   |  max(-∞, b)  |
+//	|=======|==============|
+//	|  ∀ b  |      b       |
+//	 ----------------------
+func (MinusInfinity) Max(b IntervalBound) IntervalBound {
+	return b
 }
 
-func (MinusInfinity) Min(b2 IntervalBound) IntervalBound {
+// Min computes min(-∞, b). The semantics of minimum is:
+//
+//	.----------------------.
+//	|   b   |  min(-∞, b)  |
+//	|=======|==============|
+//	|  ∀ b  |     -∞       |
+//	 ----------------------
+func (MinusInfinity) Min(b IntervalBound) IntervalBound {
 	return MinusInfinity{}
 }

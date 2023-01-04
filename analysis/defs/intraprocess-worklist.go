@@ -9,10 +9,11 @@ import (
 	"github.com/cs-au-dk/goat/utils/pq"
 )
 
-// A worklist that contains control locations.
+// EmptyIntraprocessWorklist returns an empty worklist for control locations.
 // It orders elements of the list according to the ordering described in InitializeCtrLocPriorities.
 // The list also uses a map of the contained elements to prevent duplicates.
 func EmptyIntraprocessWorklist(prios u.CtrLocPriorities) pq.PriorityQueue[CtrLoc] {
+	// Extract function and block priorities.
 	funPriorities, blockPriorities := prios.FunPriorities, prios.BlockPriorities
 
 	if funPriorities == nil {

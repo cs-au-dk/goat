@@ -13,7 +13,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-/* Creates a Dot Graph representing the program CFG */
+// Visualize creates a Dot Graph representing the program CFG
 func (cfg *Cfg) Visualize(result *pointer.Result) {
 	G := &dot.DotGraph{
 		Options: map[string]string{

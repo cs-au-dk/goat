@@ -27,10 +27,11 @@ type Store struct {
 
 func (s *Store) sendQueuedHeartbeats() {
 	s.coalescedMu.Lock()         // LockA acquire
-	defer s.coalescedMu.Unlock() // LockA release
+	defer s.coalescedMu.Unlock()
 	for i := 0; i < len(s.coalescedMu.heartbeatResponses); i++ {
 		s.sendQueuedHeartbeatsToNode() // LockB
 	}
+	// LockA release
 }
 
 func (s *Store) sendQueuedHeartbeatsToNode() {
@@ -47,7 +48,7 @@ type Replica struct {
 }
 
 func (r *Replica) reportUnreachable() {
-	r.raftMu.Lock() // LockB acquire
+	r.raftMu.Lock() // LockB acquire //@ blocks, fn
 	//+time.Sleep(time.Nanosecond)
 	defer r.raftMu.Unlock()
 	// LockB release
@@ -79,7 +80,7 @@ func (r *Replica) maybeCoalesceHeartbeat() bool {
 	msgtype := uintptr(unsafe.Pointer(r)) % 3
 	switch msgtype {
 	case 0, 1, 2:
-		r.store.coalescedMu.Lock() // LockA acquire
+		r.store.coalescedMu.Lock() // LockA acquire //@ blocks, fn
 	default:
 		return false
 	}

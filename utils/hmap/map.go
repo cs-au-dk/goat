@@ -21,6 +21,7 @@ type node[K, V any] struct {
 type Map[K, V any] struct {
 	hasher immutable.Hasher[K]
 	mp     map[uint32]*node[K, V]
+	size   int
 }
 
 // Order of V and K are swapped since K can be inferred by the argument.
@@ -35,10 +36,15 @@ func NewMapH[K utils.HashableEq[K], V any]() *Map[K, V] {
 	return NewMap[V](utils.HashableHasher[K]())
 }
 
+func (m *Map[K, V]) Len() int {
+	return m.size
+}
+
 func (m *Map[K, V]) Set(key K, value V) {
 	h := m.hasher.Hash(key)
 	if snode, found := m.mp[h]; !found {
 		m.mp[h] = &node[K, V]{key, value, nil}
+		m.size++
 	} else {
 		for {
 			if m.hasher.Equal(key, snode.key) {
@@ -49,6 +55,7 @@ func (m *Map[K, V]) Set(key K, value V) {
 			if next := snode.next; next == nil {
 				// Hash collision :(
 				snode.next = &node[K, V]{key, value, nil}
+				m.size++
 				return
 			} else {
 				snode = next

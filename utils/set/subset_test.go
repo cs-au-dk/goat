@@ -20,7 +20,6 @@ func compareResults(T *testing.T, found, expected map[string]struct{}) {
 			T.Fail()
 		}
 	}
-
 }
 
 func TestSubset(T *testing.T) {
@@ -47,10 +46,10 @@ func TestSubset(T *testing.T) {
 
 	found := make(map[string]struct{})
 
-	S.ForEach(func(i []interface{}) {
+	S.ForEach(func(i []string) {
 		str := ""
 		for _, i := range i {
-			str += i.(string)
+			str += i
 		}
 		found[str] = struct{}{}
 	})
@@ -59,7 +58,7 @@ func TestSubset(T *testing.T) {
 }
 
 func TestEmpty(T *testing.T) {
-	S := SubsetsV()
+	S := SubsetsV[string]()
 
 	expected := map[string]struct{}{
 		"": {},
@@ -67,10 +66,10 @@ func TestEmpty(T *testing.T) {
 
 	found := make(map[string]struct{})
 
-	S.ForEach(func(i []interface{}) {
+	S.ForEach(func(i []string) {
 		str := ""
 		for _, i := range i {
-			str += i.(string)
+			str += i
 		}
 		found[str] = struct{}{}
 	})

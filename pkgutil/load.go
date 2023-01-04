@@ -3,6 +3,9 @@ package pkgutil
 import (
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -10,15 +13,50 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
+// LoadConfig is a structure according to which Go pacakge loading is configured.
+// It loads a package in module-aware mode, or GOPATH mode based on how the .GoPath
+// and .ModulePath fields are set. If IncludeTests is true, package loading will also
+// expose test functions.
 type LoadConfig struct {
 	GoPath, ModulePath string
 	IncludeTests       bool
 }
 
-var moduleRegex = regexp.MustCompile(`(?m)^module\s+(.*)$`)
+// loadMode avoids deprecation warnings from using packages.LoadAllSyntax.
+// It sets all packages.Need* options.
+const loadMode packages.LoadMode = packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles |
+	packages.NeedImports | packages.NeedTypes | packages.NeedTypesSizes | packages.NeedSyntax |
+	packages.NeedTypesInfo | packages.NeedDeps
 
-// Load the AST for the packages matching the specified package name according
-// to the provided LoadConfig.
+var (
+	// moduleRegex is a regular expression according to which a go.mod file can be parsed.
+	moduleRegex = regexp.MustCompile(`(?m)^module\s+(.*)$`)
+
+	// cwd retrieves the current working directory on Goat invocation.
+	cwd = func() string {
+		if dir, err := os.Getwd(); err == nil {
+			return dir
+		} else {
+			panic(err)
+		}
+	}()
+)
+
+// relativizingParseFile is a ParseFile implementation that relativizes
+// filenames according to CWD. This is an easy way to globally make paths
+// system agnostic, which is useful for golden tests involving file paths.
+// The alternative is to manually relativize paths at every location we
+// print one, but that is made difficult by us relying on built-in
+// implementations of String methods, which we would have to circumvent.
+func relativizingParseFile(fset *token.FileSet, filename string, src []byte) (*ast.File, error) {
+	if rel, err := filepath.Rel(cwd, filename); err == nil {
+		filename = rel
+	}
+	const mode = parser.AllErrors | parser.ParseComments
+	return parser.ParseFile(fset, filename, src, mode)
+}
+
+// LoadPackages loads the AST of the specified packaged according to the provided LoadConfig.
 func LoadPackages(cfg LoadConfig, packageName string) ([]*packages.Package, error) {
 	gopath, err := filepath.Abs(cfg.GoPath)
 	if err != nil {
@@ -26,8 +64,9 @@ func LoadPackages(cfg LoadConfig, packageName string) ([]*packages.Package, erro
 	}
 
 	config := &packages.Config{
-		Mode:  packages.LoadAllSyntax,
-		Tests: cfg.IncludeTests,
+		Mode:      loadMode,
+		Tests:     cfg.IncludeTests,
+		ParseFile: relativizingParseFile,
 	}
 
 	if modulePath := cfg.ModulePath; modulePath != "" {
@@ -54,14 +93,15 @@ func LoadPackages(cfg LoadConfig, packageName string) ([]*packages.Package, erro
 		config.Env = append(os.Environ(), "GOPATH="+gopath, "GO111MODULE=off")
 	}
 
-	return LoadPackagesWithConfig(config, packageName)
+	return loadPackagesWithConfig(config, packageName)
 }
 
-// Mainly useful for testing
+// LoadPackagesFromSource loads packages directly from strings as source files.
+// It is mainly useful for testing.
 func LoadPackagesFromSource(source string) ([]*packages.Package, error) {
 	// We use the Overlay mechanism to allow the tool to load a non-existent file.
 	config := &packages.Config{
-		Mode:  packages.LoadAllSyntax,
+		Mode:  loadMode,
 		Tests: false,
 		Dir:   "",
 		Env:   append(os.Environ(), "GO111MODULE=off", "GOPATH=/fake"),
@@ -70,10 +110,13 @@ func LoadPackagesFromSource(source string) ([]*packages.Package, error) {
 		},
 	}
 
-	return LoadPackagesWithConfig(config, "/fake/testpackage/main.go")
+	return loadPackagesWithConfig(config, "/fake/testpackage/main.go")
 }
 
-func LoadPackagesWithConfig(config *packages.Config, query string) ([]*packages.Package, error) {
+// loadPackagesWithConfig wraps around packages.Load, that loads the package specified
+// by `query` according to the given configuration, and performs additional filtering when
+// loading includes test packages.
+func loadPackagesWithConfig(config *packages.Config, query string) ([]*packages.Package, error) {
 	pkgs, err := packages.Load(config, query)
 	if err != nil {
 		return nil, err

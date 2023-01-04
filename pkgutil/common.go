@@ -12,8 +12,10 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
+// opts is a shorthand for the CLI option API.
 var opts = utils.Opts()
 
+// CheckPkgInGoroot checks whether a package is declared in GOROOT.
 func CheckPkgInGoroot(pkg *types.Package) bool {
 	path := filepath.Join(runtime.GOROOT(), "src", pkg.Path())
 	if fi, err := os.Stat(path); err == nil && fi.IsDir() {
@@ -22,14 +24,14 @@ func CheckPkgInGoroot(pkg *types.Package) bool {
 	return false
 }
 
-// Returns true iff. the function is in a package in the GOROOT.
+// CheckInGoroot is true iff. the function is in a package declared in GOROOT.
 func CheckInGoroot(fun *ssa.Function) bool {
 	// var pkg *build.Package
 	return fun != nil && fun.Pkg != nil &&
 		CheckPkgInGoroot(fun.Pkg.Pkg)
 }
 
-// Determine what is the main package as follows:
+// GetMain determines what is the main package as follows:
 // 1. Take the package with the most members
 // 2. Skip the package suffixed with .test
 func GetMain(mains []*ssa.Package) (main *ssa.Package) {
@@ -44,6 +46,8 @@ func GetMain(mains []*ssa.Package) (main *ssa.Package) {
 	return
 }
 
+// AllPackages aggregates all non-synthetic test packages that
+// contain at least one member in a slice.
 func AllPackages(prog *ssa.Program) []*ssa.Package {
 	mp := make(map[string]*ssa.Package)
 

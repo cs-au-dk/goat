@@ -10,8 +10,9 @@ import (
 	L "github.com/cs-au-dk/goat/analysis/lattice"
 )
 
-// Harness for performing fully static analysis.
-// Accepts entry abstract configuration node as input and generates an analysis result.
+// StaticAnalysis performs a full static analysis, based on the given analysis context.
+// The generated result is a member of the analysis lattice, and the superlocation graph
+// constructed from the elements not bound to ⊥ in the result domain.
 func StaticAnalysis(C AnalysisCtxt) (SuperlocGraph, L.Analysis) {
 	// Channel for catching SIGUSR1 signals
 	sigCh := make(chan os.Signal, 10)
@@ -28,7 +29,7 @@ func StaticAnalysis(C AnalysisCtxt) (SuperlocGraph, L.Analysis) {
 	G := Create().SuperlocGraph(s0)
 
 	// Instantiate worklist based static analysis
-	analysis = analysis.Update(s0.Superlocation(), initState)
+	analysis = analysis.Update(s0.Superloc, initState)
 
 	// Create a prioritized worklist. Initially every configuration has the
 	// same priority. The worklist also keeps track of which superlocations are
@@ -40,6 +41,8 @@ func StaticAnalysis(C AnalysisCtxt) (SuperlocGraph, L.Analysis) {
 		}
 		return -1 // (Process first, to explore new edges)
 	}
+
+	// Construct worklist from priority queue.
 	worklist := pq.Empty(func(a, b *AbsConfiguration) bool {
 		return getPrio(a) < getPrio(b)
 	})
@@ -47,6 +50,8 @@ func StaticAnalysis(C AnalysisCtxt) (SuperlocGraph, L.Analysis) {
 
 	// Configurations are reprioritized at an exponentially decreasing rate
 	reprioritizeAt := 50
+
+	// Compute analysis fixed-point.
 FIXPOINT:
 	for steps := 0; !worklist.IsEmpty(); steps++ {
 		if C.Metrics.Enabled() {
@@ -97,35 +102,44 @@ FIXPOINT:
 			reprioritizeAt *= 2
 		}
 
+		// Retrieve next superlocation and the associated abstract state
+		// from the worklist.
 		s := worklist.GetNext()
-		C.LogSuperlocation(s.superloc)
-		state := analysis.GetUnsafe(s.Superlocation())
+		C.LogSuperlocation(s.Superloc)
+		state := analysis.GetUnsafe(s.Superloc)
 
-		// Clear successor map to prevent duplicate edges.
+		// Reset successor map to prevent duplicate edges.
 		s.Successors = map[uint32]Successor{}
-		succs := s.GetTransitions(C, state)
-		for _, succ := range succs {
+
+		// For every potential successor, perform the least-upper bound with
+		// existing superlocations in the analysis result.
+		for _, succ := range s.GetTransitions(C, state) {
+			// Retrieve the corresponding configuration for the given successor,
+			// or insert it in the superlocation graph if not already present.
 			s1 := G.GetOrSet(succ.Configuration())
-			s1Loc := s1.Superlocation()
+			s1Loc := s1.Superloc
 			// Add found successor to successor map, if not already present, and record
 			// the added transition to the "state-less" successor map
 			s.AddSuccessor(succ.DeriveConf(s1))
 
-			// prevState becomes bot if not found
+			// Retreive existing state in the analysis result for the
+			// superlocation, or ⊥ if not found
 			prevState := analysis.GetOrBot(s1Loc)
-
 			updState := succ.State
 
-			if !s1.IsPanicked() {
-				// If the memory was updated as a result of the LUB operation we put s1 in the worklist.
-				if lub := updState.MonoJoin(prevState); !lub.Eq(prevState) {
-					analysis = analysis.Update(s1Loc, lub)
-
-					worklist.Add(s1)
-				}
-			} else {
-				// Skip processing of panicked configurations
+			if s1.IsPanicked() {
+				// Add the panicking superlocation to the analysis result,
+				// but otherwise skip processing it.
 				analysis = analysis.Update(s1Loc, updState)
+				continue
+			}
+
+			// For previous state, σ, and updated state, σ', if σ ≠ σ ⊔ σ', then
+			// update the abstract state at the superlocation s to σ ⊔ σ' and add
+			// s to the worklist.
+			if lub := updState.MonoJoin(prevState); !lub.Eq(prevState) {
+				analysis = analysis.Update(s1Loc, lub)
+				worklist.Add(s1)
 			}
 		}
 	}

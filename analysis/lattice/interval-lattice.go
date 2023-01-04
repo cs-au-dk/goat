@@ -1,15 +1,19 @@
 package lattice
 
+// IntervalLattice represents the interval lattice.
 type IntervalLattice struct {
 	lattice
 }
 
+// intervalLattice is a singleton instantiation of the interval lattice.
 var intervalLattice = &IntervalLattice{}
 
+// Interval yields the interval lattice.
 func (latticeFactory) Interval() *IntervalLattice {
 	return intervalLattice
 }
 
+// Top yields [-∞, +∞].
 func (*IntervalLattice) Top() Element {
 	return Interval{
 		low:  MinusInfinity{},
@@ -17,6 +21,7 @@ func (*IntervalLattice) Top() Element {
 	}
 }
 
+// Bot yields [+∞, -∞].
 func (*IntervalLattice) Bot() Element {
 	return Interval{
 		low:  PlusInfinity{},
@@ -29,6 +34,7 @@ func (*IntervalLattice) String() string {
 		", " + colorize.Lattice("ℤ") + "]"
 }
 
+// Eq checks for equality with another lattice.
 func (l1 *IntervalLattice) Eq(l2 Lattice) bool {
 	switch l2 := l2.(type) {
 	case *IntervalLattice:
@@ -42,6 +48,7 @@ func (l1 *IntervalLattice) Eq(l2 Lattice) bool {
 	}
 }
 
+// Interval safely converts the interval lattice to IntervalLattice.
 func (l1 *IntervalLattice) Interval() *IntervalLattice {
 	return l1
 }

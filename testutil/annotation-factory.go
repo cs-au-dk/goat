@@ -8,6 +8,7 @@ import (
 
 	"github.com/cs-au-dk/goat/analysis/cfg"
 	L "github.com/cs-au-dk/goat/analysis/lattice"
+	"github.com/cs-au-dk/goat/utils"
 
 	"golang.org/x/tools/go/expect"
 	"golang.org/x/tools/go/ssa"
@@ -19,8 +20,10 @@ var (
 	id_GO             = "go"
 	id_CHAN           = "chan"
 	id_CHAN_QUERY     = "chan_query"
+	id_PSET           = "pset"
 	id_BLOCKS         = "blocks"
 	id_MAY_RELEASE    = "releases"
+	id_NO_DATAFLOW    = "nodataflow"
 	id_FALSE_POSITIVE = "fp"
 	id_FALSE_NEGATIVE = "fn"
 	id_ANALYSIS       = "analysis"
@@ -409,7 +412,24 @@ func (mgr NotesManager) CreateAnnotation(note *expect.Note) Annotation {
 			gos,
 			hardmatch,
 		}
+	case id_PSET:
+		var valid []ssa.Value
+		for node := range mgr.NodesForNote(note) {
+			if node, isSSA := node.(*cfg.SSANode); isSSA {
+				if val, ok := node.Instruction().(ssa.Value); ok &&
+					utils.AllocatesConcurrencyPrimitive(val) {
+					valid = append(valid, val)
+				}
+			}
+		}
 
+		if len(valid) == 0 {
+			panic(fmt.Sprintf("Unable to find primitive allocation site for pset note: %s", basic))
+		} else if len(valid) > 1 {
+			panic(fmt.Sprintf("Ambiguous primitive allocation site for pset note: %s (%v)", basic, valid))
+		}
+
+		return AnnPSet{basic, valid[0]}
 	case id_CHAN_QUERY:
 		// TODO: It might be nice to be able to query channels without annotating
 		// the allocation site. For instance you could put an annotation on a

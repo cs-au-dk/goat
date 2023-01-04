@@ -9,7 +9,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-// Overapproximates whether it is safe to run `abstractGC` on the memory when
+// canGC overapproximates whether it is safe to run `abstractGC` on the memory when
 // returning from `from`. It is safe to GC when exiting a function if we cannot
 // end up returning into the same function later.
 // This is trivially true if the function is not in a cycle in the callgraph

@@ -12,10 +12,13 @@ import (
 	"github.com/fatih/color"
 )
 
+// TimeTrack takes a start time, and a task name and checks how long the task took
+// to complete.
 func TimeTrack(start time.Time, name string) {
 	fmt.Printf("%s took %s\n", name, time.Since(start))
 }
 
+// VerbosePrint prints a formatted string if Goat is running in verbose mode.
 func VerbosePrint(format string, a ...interface{}) (n int, err error) {
 	if Opts().Verbose() {
 		return fmt.Printf(format, a...)
@@ -23,7 +26,8 @@ func VerbosePrint(format string, a ...interface{}) (n int, err error) {
 	return 0, nil
 }
 
-// Atoi function that fatals instead of returing a tuple with an error
+// Atoi performs an unsafe string to integer conversion, and leads to fatal exception if
+// the conversion fails.
 func Atoi(s string) int {
 	i, err := strconv.Atoi(s)
 	if err != nil {
@@ -32,10 +36,9 @@ func Atoi(s string) int {
 	return i
 }
 
-// TypeCompat checks whether a value allocated with `allocType` may
-// appear in value with declared type `declType`.
-// For instance, a pointer to an int allocated with `new(int)` may
-// appear in a value with declared type pointer to `myint`, where
+// TypeCompat checks whether a value allocated with `allocType` may appear in a value
+// with declared type `declType`. For instance, a pointer to an int allocated with
+// `new(int)` may appear in a value with declared type pointer to `myint`, declared as
 // `type myint int`, if the pointer is appropriately casted on the way.
 func TypeCompat(declType, allocType T.Type) (res bool) {
 	VerbosePrint("Starting equality check\n")
@@ -51,6 +54,7 @@ func TypeCompat(declType, allocType T.Type) (res bool) {
 	return res
 }
 
+// type
 func typeCompat(t1, t2 T.Type, visited []*T.Named) (res bool) {
 	if opts.verbose {
 		fmt.Printf("Checking equality between: %s and %s\n",

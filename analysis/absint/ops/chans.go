@@ -4,9 +4,12 @@ import (
 	L "github.com/cs-au-dk/goat/analysis/lattice"
 )
 
+// valueTransfer is the type of functions from abstract values to operation outcomes.
+// The typical flow is to take the value parameter and use it for transfer functions
+// related to the correct outcome.
 type valueTransfer = func(L.AbstractValue) L.OpOutcomes
 
-// Abstract closing of a channel.
+// Close represents the abstract closing of a channel.
 func Close(val L.AbstractValue) L.OpOutcomes {
 	OPEN, CLOSED := L.Consts().ForChanStatus()
 	BLOCK, SUCCEED, PANIC := L.Consts().OpOutcomes()
@@ -31,7 +34,35 @@ func Close(val L.AbstractValue) L.OpOutcomes {
 	return OUTCOME
 }
 
-// Abstract transformation on a single channel abstract buffer element.
+// Len represents the abstract reading of a channel's buffer.
+// TODO: Assumes only interval buffers are used.
+func Len(val L.AbstractValue) L.OpOutcomes {
+	// Reading the size of a buffer cannot fail, even for nil channels.
+	_, SUCCEED, _ := L.Consts().OpOutcomes()
+
+	ch := val.ChanValue()
+	switch {
+	case ch.BufferInterval().IsBot():
+		// The channel is guaranteed nil, in which case the `len(nil) == 0`
+		return SUCCEED(L.Elements().AbstractBasic(int64(0)))
+	case ch.BufferIntervalKnown():
+		// The interval buffer is known, so the bounds are guaranteed to be finite.
+		lo, hi := ch.BufferInterval().GetFiniteBounds()
+
+		if lo == hi {
+			// If the bounds are equal, the size of the buffer is known.
+			// Return any of the bounds as a basic value.
+			return SUCCEED(L.Elements().AbstractBasic(int64(lo)))
+		}
+	}
+
+	// If the interval is ⊤ or the bounds are not equal, the length is unknown,
+	// so return the ⊤ basic value.
+	return SUCCEED(L.Consts().BasicTopValue())
+}
+
+// FlatSend encodes the abstract enqueueing of a single item to the buffer of an abstract channel,
+// when using a flat lattice to represent the queue size.
 func FlatSend(payload L.AbstractValue) valueTransfer {
 	OPEN, CLOSED := L.Consts().ForChanStatus()
 	BLOCK, SUCCEED, PANIC := L.Consts().OpOutcomes()
@@ -114,6 +145,8 @@ func FlatSend(payload L.AbstractValue) valueTransfer {
 	}
 }
 
+// FlatReceive encodes the abstract dequeueing of a single item from the buffer of an abstract channel,
+// when using a flat lattice to represent the queue size.
 func FlatReceive(ZERO L.AbstractValue, commaOk bool) valueTransfer {
 	// If the receive is a tuple assignment, then a tuple
 	// value must be propagated instead. The first member is the channel
@@ -183,6 +216,8 @@ func FlatReceive(ZERO L.AbstractValue, commaOk bool) valueTransfer {
 	}
 }
 
+// IntervalSend encodes the abstract enqueueing of a single item to the buffer of an abstract channel,
+// when using the interval lattice to represent the queue size.
 func IntervalSend(payload L.AbstractValue) valueTransfer {
 	// Channel status constants
 	CLOSED := L.Consts().Closed()
@@ -277,6 +312,8 @@ func IntervalSend(payload L.AbstractValue) valueTransfer {
 	}
 }
 
+// IntervalReceive encodes the abstract dequeueing of a single item from the buffer of an abstract channel,
+// when using the interval lattice to represent the queue size.
 func IntervalReceive(ZERO L.AbstractValue, commaOk bool) valueTransfer {
 	// If the receive is a tuple assignment, then a tuple
 	// value must be propagated instead. The first member is the channel
@@ -379,7 +416,7 @@ func IntervalReceive(ZERO L.AbstractValue, commaOk bool) valueTransfer {
 	}
 }
 
-// Model synchronization between synchronous channels.
+// Sync models synchronization between synchronous channels.
 func Sync(commaOk bool) valueTransfer {
 	// If the receive is a tuple assignment, then a tuple
 	// value must be propagated instead. The first member is the channel
@@ -407,9 +444,8 @@ func Sync(commaOk bool) valueTransfer {
 			return BLOCK
 		}
 
-		// Do not model panics here (they should be captured by the abstract send
-		// as an asynchronous channel).
-		// Receives from an empty channel should be modelled by an abstract receive.
+		// Do not model panics here, as they are captured by the abstract sending on asynchronous channels.
+		// Receives from an empty channel are modelled by an abstract receive.
 
 		if ch.Status().Geq(OPEN) {
 			// If the channel may be open, synchronization may succeed.

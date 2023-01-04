@@ -1,28 +1,40 @@
 package lattice
 
+// TwoElementLattice represents the two element lattice:
+//
+//	⊤
+//	|
+//	⊥
 type TwoElementLattice struct {
 	lattice
 }
 
+// TwoElement returns the two element lattice.
 func (latticeFactory) TwoElement() *TwoElementLattice {
-	return twoElementLattice.TwoElement()
+	return twoElementLattice
 }
 
+// twoElementLattice is a singleton instantiation of the two-element lattice.
 var twoElementLattice *TwoElementLattice = &TwoElementLattice{}
 
+// Top retrieves the ⊤ element of the two-element lattice.
 func (*TwoElementLattice) Top() Element {
 	return twoElemTop
 }
 
+// Top retrieves the ⊥ element of the two-element lattice.
 func (*TwoElementLattice) Bot() Element {
 	return twoElemBot
 }
 
+// TwoElement converts the two-element lattice to its concrete type form.
+// Is used when the two-element lattice is masked by the Lattice interface.
 func (*TwoElementLattice) TwoElement() *TwoElementLattice {
 	// Will always succeed.
 	return twoElementLattice
 }
 
+// Eq checks that l2 is the two-element lattice.
 func (l1 *TwoElementLattice) Eq(l2 Lattice) bool {
 	// First try to get away with referential equality
 	if l1 == l2 {
@@ -41,9 +53,5 @@ func (l1 *TwoElementLattice) Eq(l2 Lattice) bool {
 }
 
 func (*TwoElementLattice) String() string {
-	return colorize.Lattice("𝔹")
-}
-
-func (*TwoElementLattice) Elements() []Element {
-	return []Element{twoElemBot, twoElemTop}
+	return colorize.Lattice("⌶")
 }

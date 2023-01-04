@@ -1,0 +1,15 @@
+# Analysis result description
+
+name: Analysis
+informal-lattice: lattice of analysis results
+description: |
+  is a member of the analysis results, binding
+  superlocations to abstract states.
+description-lattice: |
+  is the lattice of analysis results, encompassing all possible bindings
+  from superlocations to abstract states.
+informal: analysis result
+key: defs.Superloc
+informal-key: superlocation
+value: AnalysisState
+informal-value: abstract state

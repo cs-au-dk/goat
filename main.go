@@ -1,38 +1,31 @@
 package main
 
 import (
-	// "github.com/cs-au-dk/goat/solver"
-
 	"fmt"
 	"log"
-	"math"
 	"os"
-	"os/exec"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/cs-au-dk/goat/analysis/upfront/chreflect"
+	"github.com/cs-au-dk/goat/analysis/upfront/condinline"
 	"github.com/cs-au-dk/goat/analysis/upfront/loopinline"
-	dotg "github.com/cs-au-dk/goat/graph"
 	"github.com/cs-au-dk/goat/pkgutil"
 	tu "github.com/cs-au-dk/goat/testutil"
 	"github.com/cs-au-dk/goat/utils"
-	"github.com/cs-au-dk/goat/utils/dot"
 	"github.com/cs-au-dk/goat/utils/graph"
 	"github.com/cs-au-dk/goat/utils/hmap"
+	"github.com/cs-au-dk/goat/vistool"
 
 	ai "github.com/cs-au-dk/goat/analysis/absint"
-	"github.com/cs-au-dk/goat/analysis/cfg"
 	"github.com/cs-au-dk/goat/analysis/defs"
 	"github.com/cs-au-dk/goat/analysis/gotopo"
 	u "github.com/cs-au-dk/goat/analysis/upfront"
 
 	"github.com/fatih/color"
 	"golang.org/x/tools/go/callgraph/rta"
-	"golang.org/x/tools/go/pointer"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 
@@ -41,20 +34,27 @@ import (
 )
 
 var (
+	// opts exposes all the CLI passed configuration flags.
 	opts = utils.Opts()
+	// task exposes what task Goat is supposed to perform during the current execution
 	task = opts.Task()
 )
 
 func main() {
+	// Parse CLI provided arguments.
 	utils.ParseArgs()
+	// Retrieve target package path.
 	path := utils.MakePath()
 
+	// When debugging, set up pprof webview server.
 	if opts.HttpDebug() {
 		go func() {
 			log.Println(http.ListenAndServe("localhost:6060", nil))
 		}()
 	}
 
+	// Load packages at the given path, where LoadConfig extracts GOPATH,
+	// module-aware settings and test inclusion from CLI flags.
 	pkgs, err := pkgutil.LoadPackages(pkgutil.LoadConfig{
 		GoPath:       opts.GoPath(),
 		ModulePath:   opts.ModulePath(),
@@ -66,88 +66,41 @@ func main() {
 		os.Exit(1)
 	}
 
-	// pkgs = u.UnrollLoops(pkgs)
-	err = loopinline.InlineLoops(pkgs)
+	// Inline Cond variable constructors at AST level to improve points analysis precision.
+	err = u.ASTTranform(pkgs, condinline.Transform)
+	if err != nil {
+		log.Fatalln("sync.NewCond inlining failed?", err)
+	}
+
+	// Set loops at one iteration at AST level.
+	err = u.ASTTranform(pkgs, loopinline.Transform)
 	if err != nil {
 		log.Fatalln("Loop inlining failed?", err)
 	}
 
+	// If the task was to check whether the package could be build, stop here.
 	if opts.Task().IsCanBuild() {
 		return
 	}
 
+	// Convert program to SSA form and build it.
 	prog, _ := ssautil.AllPackages(pkgs, ssa.InstantiateGenerics)
 	prog.Build()
 
+	// Extract all main package candidates from the SSA program.
 	mains := ssautil.MainPackages(prog.AllPackages())
-
 	if len(mains) == 0 {
 		log.Println("No main packages detected")
 		return
 	}
 
+	// Get all local packages in the SSA program.
 	allPackages := pkgutil.AllPackages(prog)
 	pkgutil.GetLocalPackages(mains, allPackages)
 
+	// Map channel allocation sites to names, for the given
 	if !opts.SkipChanNames() {
 		u.CollectNames(pkgs)
-	}
-
-	// Assemble pre-analysis preanalysisPipeline
-	preanalysisPipeline := func(includes u.IncludeType) (*pointer.Result, *cfg.Cfg) {
-		fmt.Println()
-		log.Println("Performing points-to analysis...")
-		ptaResult := u.Andersen(prog, mains, includes)
-		log.Println("Points-to analysis done")
-		fmt.Println()
-
-		log.Println("Extending CFG...")
-		progCfg := cfg.GetCFG(prog, mains, ptaResult)
-		log.Println("CFG extensions done")
-		fmt.Println()
-
-		opts.OnVerbose(func() {
-			for val, ptr := range ptaResult.Queries {
-				fmt.Printf("Points to information for \"%s\" at %d (%s):\n",
-					val, val.Pos(), prog.Fset.Position(val.Pos()))
-				for _, label := range ptr.PointsTo().Labels() {
-					fmt.Printf("%s : %d (%s), ", label, (*label).Pos(), prog.Fset.Position((*label).Pos()))
-				}
-				fmt.Print("\n\n")
-			}
-		})
-
-		return ptaResult, progCfg
-	}
-
-	fullPreanalysisPipeline := func(includes u.IncludeType) (
-		*pointer.Result,
-		*cfg.Cfg,
-		u.GoTopology,
-	) {
-		ptaResult, progCfg := preanalysisPipeline(includes)
-
-		log.Println("Constructing Goroutine topology...")
-		goros := u.CollectGoros(ptaResult)
-		log.Println("Goroutine topology done")
-
-		opts.OnVerbose(func() {
-			fmt.Println("Found the following goroutines:")
-			for _, goro := range goros {
-				fmt.Println(goro.String())
-				fmt.Println()
-			}
-			fmt.Println()
-		})
-
-		return ptaResult, progCfg, goros
-	}
-
-	// States queries for which types to include the Andersen points-to analysis
-	standardPTAnalysisQueries := u.IncludeType{
-		Chan:      true,
-		Function:  true,
-		Interface: true,
 	}
 
 	aiConfig := ai.AIConfig{
@@ -155,161 +108,16 @@ func main() {
 		Log:     opts.LogAI(),
 	}
 
+	pl := pipeline{
+		prog:  prog,
+		mains: mains,
+	}
+
 	switch {
-	case task.IsStaticMetrics():
-		pt, cfg := preanalysisPipeline(u.IncludeType{All: true})
+	default:
+		// Execute secondary, non-abstract interpretation related tasks
+		pl.secondaryTask()
 
-		cs, callees := cfg.MaxCallees()
-
-		prec2 := func(n float64) float64 {
-			return math.Floor(n*100) / 100
-		}
-
-		order := func(count map[int]int) (ordered []struct{ count, nodes int }, total int) {
-			for c, nodes := range count {
-				ordered = append(ordered, struct {
-					count, nodes int
-				}{c, nodes})
-				total += nodes
-			}
-			sort.Slice(ordered, func(i, j int) bool {
-				return ordered[i].count < ordered[j].count
-			})
-
-			return
-		}
-
-		fmt.Println("================ Results =====================")
-		fmt.Println("Maximum callees for a call-site:", color.BlueString(cs.String()), color.GreenString(strconv.Itoa(callees)))
-
-		orderedCallsites, callsiteTotal := order(cfg.CalleeCount())
-		orderedExitnodes, exitsTotal := order(cfg.CallerCount())
-		orderedChanops, chOpsTotal := order(cfg.ChanOpsPointsToSets(pt))
-		orderedChanImprecision, chTotal := order(cfg.CheckImpreciseChanOps(pt))
-
-		type printConfig = struct {
-			source string
-			drain  string
-			total  int
-		}
-
-		print := func(conf printConfig, orderedSites []struct{ count, nodes int }) {
-			for _, o := range orderedSites {
-				c, nodes := o.count, o.nodes
-
-				percent := prec2(float64(nodes) / float64(conf.total) * 100)
-				var colorize func(string, ...interface{}) string
-				switch {
-				case c <= 1:
-					colorize = color.BlueString
-				case c == 2:
-					colorize = color.GreenString
-				case 3 <= c && c <= 5:
-					colorize = color.YellowString
-				default:
-					colorize = color.HiRedString
-				}
-
-				fmt.Println(colorize("%v", c), " "+conf.drain+" found at", percent, "% ("+color.HiCyanString("%v", nodes)+") of", conf.source)
-			}
-		}
-
-		fmt.Println("\nOutgoing degree for function call/method invocation sites")
-		print(printConfig{
-			source: "call sites",
-			drain:  "callees",
-			total:  callsiteTotal,
-		}, orderedCallsites)
-
-		fmt.Println("\nOutgoing degree for function exit nodes")
-		print(printConfig{
-			source: "function exit nodes",
-			drain:  "callers",
-			total:  exitsTotal,
-		}, orderedExitnodes)
-
-		fmt.Println("\nPoints-to set cardinality for channel operands of channel operations")
-		print(printConfig{
-			source: "channel operations",
-			drain:  "channel operands in points-to set",
-			total:  chOpsTotal,
-		}, orderedChanops)
-
-		fmt.Println("\nChannel primitive imprecision")
-		print(printConfig{
-			source: "channels",
-			drain:  "maximum channels which may alias at the same operation",
-			total:  chTotal,
-		}, orderedChanImprecision)
-
-	case task.IsGoroTopology():
-		ptaResult, _, goros := fullPreanalysisPipeline(standardPTAnalysisQueries)
-
-		log.Println("Constructing topology graph...")
-		image_path := dotg.BuildGraph(prog, ptaResult, goros)
-		fmt.Println(image_path)
-	case task.IsCycleCheck():
-		_, _, goros := fullPreanalysisPipeline(standardPTAnalysisQueries)
-
-		log.Println("Logging cycles in the goroutine topology graph...")
-		goros.LogCycles()
-	case task.IsPointsTo():
-		pt, _ := preanalysisPipeline(u.IncludeType{All: true})
-
-		if len(pt.Warnings) > 0 {
-			fmt.Println("Warnings:")
-			for _, w := range pt.Warnings {
-				fmt.Println(w)
-			}
-		}
-
-		fmt.Println()
-		log.Println("Points-to analysis results:")
-		fmt.Println("Direct queries:")
-		for v, ptset := range pt.Queries {
-			if opts.LocalPackages() && !pkgutil.IsLocal(v) {
-				continue
-			}
-			fmt.Println("SSA Value", utils.SSAValString(v))
-			fmt.Println("Points to: {")
-			str := ""
-			for _, l := range ptset.PointsTo().Labels() {
-				lv := l.Value()
-				str += "\t" + utils.SSAValString(lv) + ",\n"
-			}
-			str += "}"
-			fmt.Println(str)
-		}
-		fmt.Println("")
-		fmt.Println("Indirect queries:")
-		for v, ptset := range pt.IndirectQueries {
-			if opts.LocalPackages() && !pkgutil.IsLocal(v) {
-				continue
-			}
-			fmt.Println("SSA Value", utils.SSAValString(v))
-			fmt.Println("Indirectly points to: {")
-			str := ""
-			for _, l := range ptset.PointsTo().Labels() {
-				lv := l.Value()
-				str += "\t" + utils.SSAValString(lv) + ",\n"
-			}
-			str += "}"
-			fmt.Println(str)
-		}
-	case task.IsCheckPsets():
-		pt, cfg := preanalysisPipeline(u.IncludeType{All: true})
-
-		G := graph.FromCallGraph(pt.CallGraph, true)
-		psets := gotopo.GetInterprocPsets(cfg, pt, G)
-		log.Println(psets)
-	case task.IsWrittenFieldsAnalysis():
-		pt, _ := preanalysisPipeline(u.IncludeType{All: true})
-		cg := pt.CallGraph
-		callDAG := graph.FromCallGraph(cg, true).SCC([]*ssa.Function{cg.Root.Func})
-
-		wf := u.ComputeWrittenFields(pt, callDAG)
-
-		log.Println(wf)
 	case task.IsCollectPrimitives():
 		if !opts.Metrics() {
 			log.Fatalln("Run with -metrics")
@@ -328,39 +136,44 @@ func main() {
 		if len(entries) == 0 {
 			log.Println("Skipping benchmark since it has no entries")
 			return
-		} else {
-			// This is a cheap check to see if we can avoid processing the package altogether.
-			// If there is no reachable local channel allocation in the RTA call graph,
-			// there is no need to do expensive (pointer) pre-analyses.
-			log.Println("Building initial RTA callgraph")
-			rtaCG := rta.Analyze(entries, true).CallGraph
-			rtaG := graph.FromCallGraph(rtaCG, false)
-			log.Printf("RTA callgraph constructed with %d nodes", len(rtaCG.Nodes))
+		}
+		// This is a cheap check to see if we can avoid processing the package altogether.
+		// If there is no reachable local channel allocation in the RTA call graph,
+		// there is no need to do expensive (pointer) pre-analyses.
+		log.Println("Building initial RTA callgraph")
+		rtaCG := rta.Analyze(entries, true).CallGraph
+		rtaG := graph.FromCallGraph(rtaCG, false)
+		log.Printf("RTA callgraph constructed with %d nodes", len(rtaCG.Nodes))
 
-			// Check if an entry can reach a local channel allocation in the RTA call graph
-			if !rtaG.BFSV(func(fun *ssa.Function) bool {
-				if pkgutil.IsLocal(fun) {
-					for _, block := range fun.Blocks {
-						for _, insn := range block.Instrs {
-							if _, isMakeChan := insn.(*ssa.MakeChan); isMakeChan {
-								//log.Println(insn, prog.Fset.Position(insn.Pos()))
-								return true
-							}
+		// Check if an entry can reach a local channel allocation in the RTA call graph
+		if !rtaG.BFSV(func(fun *ssa.Function) bool {
+			if pkgutil.IsLocal(fun) {
+				for _, block := range fun.Blocks {
+					for _, insn := range block.Instrs {
+						// TODO: If we also want to analyse other concurrency primitives
+						// we should use utils.AllocatesConcurrencyPrimitive instead here.
+						if _, isMakeChan := insn.(*ssa.MakeChan); isMakeChan {
+							return true
 						}
 					}
 				}
-				return false
-			}, entries...) {
-				log.Println("Skipping benchmark since it has no local channel allocations")
-				return
 			}
+			return false
+		}, entries...) {
+			log.Println("Skipping benchmark since it has no local channel allocations")
+			return
 		}
 
-		skips, aborts, completes := 0, 0, 0
-		pt, pcfg := preanalysisPipeline(u.IncludeType{All: true})
+		var skips, aborts, completes int
+		// Compute the pre-analysis
+		pt, pcfg := pl.preanalysisPipeline(u.IncludeType{All: true})
+
+		// Retrieve all the functions in the CFG
 		cfgFunctions := pcfg.Functions()
+		// Compute the sound and pruned call-graphs
 		soundG := graph.FromCallGraph(pt.CallGraph, false)
 		G := graph.FromCallGraph(pt.CallGraph, true)
+
 		wf := u.ComputeWrittenFields(pt, G.SCC(entries))
 
 		// Perform deduplication of fragments over all entry points.
@@ -369,7 +182,10 @@ func main() {
 		// (At least it's a little bit less obvious how to use them)
 		allSeenFragments := map[*ssa.Function]*hmap.Map[utils.SSAValueSet, bool]{}
 
+		// For every possible entry point
 		for idx, entry := range entries {
+			// If the analysis is targetted at a certain function, skip all functions
+			// that do not match the query.
 			if !opts.IsWholeProgramAnalysis() && !(strings.HasSuffix(entry.Name(), opts.Function()) ||
 				strings.HasSuffix(entry.String(), opts.Function())) {
 				continue
@@ -377,40 +193,42 @@ func main() {
 
 			log.Printf("Entry %d of %d: %v", idx+1, len(entries), entry)
 
-			/*
-				var spkg *ssa.Package
-				if entry.Name() == "main" {
-					spkg = entry.Package()
-				} else {
-					spkg = pkgutil.CreateFakeTestMainPackage(entry)
-				}
-
-				mains = []*ssa.Package{spkg}
-			*/
-
+			// Compute call DAG
 			callDAG := G.SCC([]*ssa.Function{entry})
+			// Compute dominator tree as a variadic function over functions that
+			// returns the dominator function.
 			computeDominator := G.DominatorTree(entry)
 
-			ps, primsToUses := gotopo.GetPrimitives(entry, pt, G)
+			// Get concurrency primitives, and a map from concurrency primitives to
+			// functions that use it.
+			ps, primsToUses := gotopo.GetPrimitives(entry, pt, G, false)
 
+			// Compute P-Sets based on the chosen P-Set strategy.
 			psets := func() (psets gotopo.PSets) {
 				switch {
 				case opts.PSets().SameFunc():
+					// Same function P-sets.
 					return gotopo.GetSameFuncPsets(ps)
 				case opts.PSets().GCatch():
+					// GCatch Psets
 					return gotopo.GetGCatchPSets(
-						pcfg, entry, pt, G,
-						computeDominator, callDAG, ps) // GCatch Psets
+						pcfg, entry, pt, G, computeDominator, callDAG, primsToUses)
+				case opts.PSets().SCCS():
+					// Inter-procedural dependencies
+					return gotopo.GetSCCPSets(callDAG, primsToUses, pt)
 				case opts.PSets().Total():
-					return gotopo.GetTotalPset(ps) // Singular whole program p-set
+					// Singular whole program P-set
+					return gotopo.GetTotalPset(ps)
 				case opts.PSets().Singleton():
+					// Singleton P-Sets
 					fallthrough
 				default:
-					return gotopo.GetSingletonPsets(ps) // Singleton sets
+					// Fallback to singleton P-sets as default
+					return gotopo.GetSingletonPsets(ps)
 				}
 			}()
 
-			// Remove channels from PSets where the channel flows into the reflection library
+			// Remove channels that flow into the reflection library from P-sets.
 			if reflectedChans := chreflect.GetReflectedChannels(prog, pt); !reflectedChans.Empty() {
 				log.Printf("%s:\n%v",
 					color.YellowString("Pruning channels from PSets that flow into the reflection library"),
@@ -435,27 +253,33 @@ func main() {
 				psets = newPsets
 			}
 
-			//log.Printf("%s", psets)
-
+			// If no P-sets remain, skip analysis.
 			if len(psets) == 0 {
 				log.Printf("%d primitives outside GOROOT reachable from %s", len(psets), entry)
 				continue
 			}
 
-			// Ensure consistent ordering
+			// Ensure consistent ordering between P-sets.
 			sort.Slice(psets, func(i, j int) bool {
 				return psets[i].String() < psets[j].String()
 			})
 
+			// Define the type of fragments, pairing an entry function with a P-set.
 			type fragment struct {
 				entry *ssa.Function
 				pset  utils.SSAValueSet
 			}
 
+			// Start from the empty set of fragments.
 			fragments := []fragment{}
+
+			// Compute analysis of P-set.
 			for _, pset := range psets {
 				// TODO: Protect dominator computation with flag?
 				funs := []*ssa.Function{}
+
+				// Aggregate a set of functions that includes all the channel operations
+				// and the channel's allocation site.
 				pset.ForEach(func(v ssa.Value) {
 					if v.Parent() != nil {
 						// Include allocation site in dominator computation
@@ -466,12 +290,14 @@ func main() {
 					}
 				})
 
+				// compute the dominator function that covers operations of all channels in the P-set.
 				loweredEntry := computeDominator(funs...)
 				if _, found := cfgFunctions[loweredEntry]; !found {
 					log.Println(color.YellowString("CFG does not contain the entry function."))
 					continue
 				}
 
+				// De-duplicate fragments based on entry point and P-sets.
 				seenFragments, ok := allSeenFragments[loweredEntry]
 				if !ok {
 					mp := hmap.NewMap[bool](utils.SSAValueSetHasher)
@@ -487,22 +313,34 @@ func main() {
 
 			log.Printf("%d primitives outside GOROOT reachable from %s", len(fragments), entry)
 
+			// Load options.
 			loadRes := tu.LoadResult{
-				Prog:             prog,
-				Mains:            mains,
-				Cfg:              pcfg,
-				Pointer:          pt,
-				CallDAG:          soundG.SCC([]*ssa.Function{entry}),
-				PrunedCallDAG:    callDAG,
+				// Program, main packages and CFG
+				Prog:  prog,
+				Mains: mains,
+				Cfg:   pcfg,
+
+				// Points-to analysis
+				Pointer: pt,
+				// Compute call DAG SCC with from the entry function
+				CallDAG: soundG.SCC([]*ssa.Function{entry}),
+				// Re-use pruned call DAG.
+				PrunedCallDAG: callDAG,
+
+				// Compute control location priorities and written-fields analysis
 				CtrLocPriorities: u.GetCtrLocPriorities(cfgFunctions, callDAG),
 				WrittenFields:    wf,
 			}
 
+			// For every fragment, run the analysis
 			for i, fragment := range fragments {
+				// If a specific P-set is targeted (by index), skip
+				// until the desired index is found.
 				if !opts.IsPickedPset(i + 1) {
 					continue
 				}
 
+				// Extract dominator function as entry point and P-set from the fragment.
 				loweredEntry, pset := fragment.entry, fragment.pset
 
 				fmt.Println()
@@ -512,146 +350,78 @@ func main() {
 
 				log.Println("Using", loweredEntry, "as entrypoint")
 
-				C := ai.ConfigAI(aiConfig).Function(loweredEntry)(loadRes)
+				// Get analysis context and compute the fragment predicate from the given primitives.
+				C := aiConfig.Function(loweredEntry)(loadRes)
 				C.FragmentPredicateFromPrimitives(pset.Entries(), primsToUses)
 
+				// Wire timeout function.
 				done := make(chan bool, 1)
 				timeout := 60 * time.Second
 				go func() {
 					select {
 					case <-time.After(timeout):
 						log.Println("Skipping")
-						C.Metrics.Skip()
+						C.Skip()
 					case <-done:
 					}
 				}()
 
-				C.Metrics.TimerStart()
+				// Start static analysis and timer
+				C.TimerStart()
 				ts, analysis := ai.StaticAnalysis(C)
 				done <- true
 
 				log.Println("Superlocation graph size:", ts.Size())
 
-				switch C.Metrics.Outcome {
+				// Inspect outcome of static analysis
+				switch C.Outcome {
 				case ai.OUTCOME_SKIP:
+					// Analysis skipped
 					log.Println(color.RedString("Skipped!"))
 					skips++
 				case ai.OUTCOME_PANIC:
+					// Analysis aborted
 					log.Println(color.RedString("Aborted!"))
-					log.Println(C.Metrics.Error())
+					log.Println(C.Error())
 					aborts++
 				default:
-					C.Metrics.Done()
-					log.Println(color.GreenString("SA completed in %s", C.Metrics.Performance()))
+					// Analysis completed successfully.
+					C.Done()
+					log.Println(color.GreenString("SA completed in %s", C.Performance()))
 					completes++
 
+					// Compute blocking abstract thread analysis
 					blocks := ai.BlockAnalysisFiltered(C, ts, analysis, true)
+
 					if len(blocks) == 0 {
 						log.Println(color.GreenString("No blocking bugs detected"))
 					} else {
+						// Log all the blocking bugs found.
 						blocks.Log()
 
+						if opts.HttpVisualize() {
+							// Start HTTP visualization if HTTP visualization is an option.
+							vistool.Start(C, ts, analysis, blocks)
+						}
+
 						if opts.Visualize() {
+							// Visualize textual trace.
 							blocks.PrintPath(ts, analysis, G)
+							// Visualize blocking location.
 							ts.Visualize(blocks)
 						}
 					}
-
 				}
-
-				/*
-					allocSiteExpansions := 0
-					pset.ForEach(func(prim ssa.Value) {
-						allocSiteExpansions += C.Metrics.Functions()[prim.Parent()]
-					})
-
-					syncConfsWithPrimitive := 0
-					ts.ForEach(func(conf *ai.AbsConfiguration) {
-						state := analysis.GetUnsafe(conf.Superlocation())
-						if !conf.IsPanicked() && conf.IsSynchronizing(C, state) {
-							mem := state.Memory()
-							_, _, found := conf.Threads().Find(func(g defs.Goro, cl defs.CtrLoc) bool {
-								for _, prim := range cfg.CommunicationPrimitivesOf(cl.Node()) {
-									if av := ai.EvaluateSSA(g, mem, prim); av.IsPointer() {
-										for _, ptr := range av.PointerValue().Entries() {
-											site, _ := ptr.GetSite()
-											if C.IsPrimitiveFocused(site) {
-												return true
-											}
-										}
-									}
-								}
-								return false
-							})
-
-							if found {
-								syncConfsWithPrimitive++
-							}
-						}
-					})
-
-					log.Printf("allocSiteExpansions: %d, synchronizing configurations with primitive: %d",
-						allocSiteExpansions, syncConfsWithPrimitive)
-				*/
 			}
 		}
 
 		log.Printf("Completed runs: %d, skipped runs: %d, aborted runs: %d", completes, skips, aborts)
 
-	case task.IsChannelAliasingCheck():
-		fullPreanalysisPipeline(standardPTAnalysisQueries)
-		fmt.Printf("%d -- %s\n", u.ChAliasingInfo.MaxChanPtsToSetSize, u.ChAliasingInfo.Location)
-	case task.IsCfgToDot():
-		ptaResult, cfg := preanalysisPipeline(standardPTAnalysisQueries)
-
-		log.Println("Preparing to visualize CFG:")
-		if opts.IsWholeProgramAnalysis() {
-			cfg.Visualize(ptaResult)
-		} else {
-			cfg.VisualizeFunc(opts.Function())
-		}
-	case task.IsCallGraphToDot():
-		ptaResult, cfg := preanalysisPipeline(standardPTAnalysisQueries)
-
-		log.Println("Preparing to visualize callgraph:")
-		cg := graph.FromCallGraph(ptaResult.CallGraph, false)
-		root := ptaResult.CallGraph.Root.Func
-		if opts.Function() != "main" {
-			root = cfg.FunctionByName(opts.Function())
-		}
-		scc := cg.SCC([]*ssa.Function{root})
-		allNodes := []*ssa.Function{}
-		allComps := []int{}
-		for i, comp := range scc.Components {
-			anyLocal := false
-			for _, node := range comp {
-				if pkgutil.IsLocal(node) {
-					anyLocal = true
-					break
-				}
-			}
-			if anyLocal || !opts.LocalPackages() {
-				allNodes = append(allNodes, comp...)
-				allComps = append(allComps, i)
-			}
-		}
-		scc.Convolution().ToDotGraph(allComps, &graph.VisualizationConfig[int]{
-			NodeAttrs: func(node int) (string, dot.DotAttrs) {
-				return fmt.Sprint(node), dot.DotAttrs{"label": fmt.Sprint(scc.Components[node][0])}
-			},
-		}).ShowDot()
-		cg.ToDotGraph(allNodes, &graph.VisualizationConfig[*ssa.Function]{
-			ClusterKey: func(node *ssa.Function) any { return scc.ComponentOf(node) },
-		}).ShowDot()
 	case task.IsAbstractInterpretation():
-		ptQueries := u.IncludeType{All: true}
-		if !task.IsWholeProgramAnalysis() {
-			ptQueries = u.IncludeType{All: true}
-		}
+		ptaResult, prog_cfg := pl.preanalysisPipeline(u.IncludeType{All: true})
 
 		results := make(map[*ssa.Function]*ai.Metrics)
 
-		ptaResult, prog_cfg := preanalysisPipeline(ptQueries)
 		cg := ptaResult.CallGraph
 		entries := []*ssa.Function{cg.Root.Func}
 		loadRes := tu.LoadResult{
@@ -666,7 +436,7 @@ func main() {
 		loadRes.WrittenFields = u.ComputeWrittenFields(ptaResult, loadRes.PrunedCallDAG)
 
 		// Analysis context
-		Cs := ai.ConfigAI(aiConfig).Executable(loadRes)
+		Cs := aiConfig.Executable(loadRes)
 
 		timeout := 120000 * time.Millisecond
 
@@ -707,13 +477,13 @@ func main() {
 			// Allocate space for spawned goroutines
 			go func(f *ssa.Function, C ai.AnalysisCtxt) {
 				var blocks ai.Blocks
-				C.Metrics.TimerStart()
+				C.TimerStart()
 				defer func() {
-					if C.Metrics.HasConcurrency() {
+					if C.HasConcurrency() {
 						// ops := C.ConcurrencyOps
 						// fs := C.ExpandedFunctions
 						mu.Lock()
-						C.Metrics.Done()
+						C.Done()
 						results[f] = C.Metrics
 						mu.Unlock()
 					}
@@ -722,7 +492,7 @@ func main() {
 					if err := recover(); err != nil {
 						mu.Lock()
 						if _, ok := results[f]; !ok {
-							C.Metrics.Panic(err)
+							C.Panic(err)
 							results[f] = C.Metrics
 						}
 						mu.Unlock()
@@ -732,7 +502,7 @@ func main() {
 
 					mu.Lock()
 					if _, ok := results[f]; !ok {
-						C.Metrics.Done()
+						C.Done()
 						results[f] = C.Metrics
 					}
 					mu.Unlock()
@@ -747,8 +517,8 @@ func main() {
 				}
 				blocks = ai.BlockAnalysis(C, G, result)
 				// log.Println("Analysis result:\n", A)
-				if C.Metrics.IsRelevant() {
-					C.Metrics.SetBlocks(blocks)
+				if C.IsRelevant() {
+					C.SetBlocks(blocks)
 				}
 				if !C.Metrics.Enabled() {
 					blocks.Log()
@@ -771,7 +541,7 @@ func main() {
 
 					mu.Lock()
 					if _, ok := results[f]; !ok {
-						C.Metrics.Skip()
+						C.Skip()
 						results[f] = C.Metrics
 					}
 					mu.Unlock()
@@ -784,143 +554,6 @@ func main() {
 			}
 		}
 
-		GatherMetrics(loadRes, results)
-	case task.IsPosition():
-		for _, pkg := range prog.AllPackages() {
-			for _, member := range pkg.Members {
-				switch f := member.(type) {
-				case *ssa.Function:
-					utils.PrintSSAFunWithPos(prog.Fset, f)
-				}
-			}
-		}
+		gatherMetrics(loadRes, results)
 	}
-}
-
-func GatherMetrics(loadRes tu.LoadResult, results map[*ssa.Function]*ai.Metrics) {
-	if !opts.Metrics() || len(results) == 0 {
-		return
-	}
-	prog := loadRes.Prog
-	coveredConcOp := make(map[ssa.Instruction]struct{})
-	coveredChans := make(map[ssa.Instruction]struct{})
-	coveredGos := make(map[ssa.Instruction]struct{})
-
-	msg := "================ Results =====================\n\n"
-
-	for f, r := range results {
-		msg += "Function: " + f.String() + "\n"
-		msg += "Outcome: " + r.Outcome + "\n"
-
-		if r.Outcome == ai.OUTCOME_SKIP {
-			msg += "Function finished\n\n"
-			continue
-		}
-		if r.Outcome == ai.OUTCOME_PANIC {
-			msg += r.Error() + "\nFunction finished\n\n"
-			continue
-		}
-
-		msg += "Time: " + r.Performance() + "\n\n"
-
-		files := make(map[string]struct{})
-
-		if len(r.Functions()) > 0 {
-			msg += "Expanded functions: " + fmt.Sprintf("%d", len(r.Functions())) + " {\n"
-			for f, times := range r.Functions() {
-				fn := prog.Fset.Position(f.Pos()).Filename
-				if _, ok := files[fn]; !ok {
-					files[prog.Fset.Position(f.Pos()).Filename] = struct{}{}
-				}
-
-				msg += "  " + f.String() + " -- " + fmt.Sprintf("%d", times) + "\n"
-			}
-			msg += "}\n"
-		}
-
-		if len(r.Blocks()) > 0 {
-			msg += "Blocks:"
-			msg += r.Blocks().String()
-			msg += "\n"
-		}
-
-		fs := make([]string, 0, len(files))
-		for f := range files {
-			fs = append(fs, f)
-		}
-		if len(fs) > 0 {
-			cloc := exec.Command("cloc", fs...)
-			out, err := cloc.Output()
-			if err == nil {
-				msg += string(out) + "\n"
-			}
-		}
-
-		for i := range r.ConcurrencyOps() {
-			coveredConcOp[i] = struct{}{}
-		}
-		for i := range r.Gos() {
-			coveredGos[i] = struct{}{}
-		}
-		for i := range r.Chans() {
-			coveredChans[i] = struct{}{}
-		}
-		msg += "Function finished\n\n"
-	}
-
-	allConcOps := loadRes.Cfg.GetAllConcurrencyOps()
-	msg += "Concurrency operations covered: " + fmt.Sprint(len(coveredConcOp)) + "/" + fmt.Sprint(len(allConcOps)) + " {\n"
-	if len(allConcOps) > 0 {
-		notCovered := make(map[ssa.Instruction]struct{})
-		for op := range allConcOps {
-			if _, ok := coveredConcOp[op]; !ok {
-				notCovered[op] = struct{}{}
-			}
-		}
-		if len(notCovered) > 0 {
-			msg += "Not covered: {\n"
-			for op := range notCovered {
-				msg += "  " + op.String() + ":" + prog.Fset.Position(op.Pos()).String() + "\n"
-			}
-			msg += "}\n"
-		}
-	}
-
-	allChans := loadRes.Cfg.GetAllChans()
-	msg += "Channel sites covered: " + fmt.Sprint(len(coveredChans)) + "/" + fmt.Sprint(len(allChans)) + "\n"
-	if len(allChans) > 0 {
-		notCovered := make(map[ssa.Instruction]struct{})
-		for ch := range allChans {
-			if _, ok := coveredChans[ch]; !ok {
-				notCovered[ch] = struct{}{}
-			}
-		}
-		if len(notCovered) > 0 {
-			msg += "Not covered: {\n"
-			for ch := range notCovered {
-				msg += "  " + ch.String() + ":" + prog.Fset.Position(ch.Pos()).String() + "\n"
-			}
-			msg += "}\n"
-		}
-	}
-
-	allGos := loadRes.Cfg.GetAllGos()
-	msg += "Goroutine sites covered: " + fmt.Sprint(len(coveredGos)) + "/" + fmt.Sprint(len(allGos)) + "\n"
-	if len(allGos) > 0 {
-		notCovered := make(map[ssa.Instruction]struct{})
-		for g := range allGos {
-			if _, ok := coveredGos[g]; !ok {
-				notCovered[g] = struct{}{}
-			}
-		}
-		if len(notCovered) > 0 {
-			msg += "Not covered: {\n"
-			for g := range notCovered {
-				msg += "  " + g.String() + ":" + prog.Fset.Position(g.Pos()).String() + "\n"
-			}
-			msg += "}\n"
-		}
-	}
-	msg += "================ Results ====================="
-	fmt.Println(msg)
 }

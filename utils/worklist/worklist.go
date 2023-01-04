@@ -2,6 +2,7 @@ package worklist
 
 import "sync"
 
+// Worklist is a concurrency-safe generalization of the worklist algorithm.
 type Worklist[T any] struct {
 	list []T
 	mu   sync.Mutex
@@ -26,10 +27,12 @@ func StartV[T any](start []T, do func(next T, add func(el T))) {
 	W.Process(do)
 }
 
+// Empty creates an empty worklist with members of the given type.
 func Empty[T any]() Worklist[T] {
 	return Worklist[T]{}
 }
 
+// GetNext pops the first element from the worklist.
 func (w *Worklist[T]) GetNext() (ret T) {
 	if len(w.list) == 0 {
 		return
@@ -39,10 +42,12 @@ func (w *Worklist[T]) GetNext() (ret T) {
 	return next
 }
 
+// IsEmpty checks if the worklist is done.
 func (w *Worklist[T]) IsEmpty() bool {
 	return len(w.list) == 0
 }
 
+// Process abstract the worklist by popping elements
 func (w *Worklist[T]) Process(
 	do func(
 		next T,

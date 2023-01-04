@@ -1,0 +1,37 @@
+# ChannelInfo description.
+
+name: ChannelInfo
+description: ChannelInfo is a member of the lattice of abstract channels.
+informal: abstract channel
+lattice: lattice of abstract channels
+fields:
+  - accessor: Capacity
+    typename: FlatElement
+    typecast: Flat
+    stringname: Capacity
+    getcomment: retrieves the abstract channel capacity as a flat integer value.
+    setcomment: updates the abstract capacity of a channel.
+  - accessor: Status
+    typename: FlatElement
+    typecast: Flat
+    stringname: Open?
+    getcomment: retrieves the status of the abstract channel, which may be OPEN or CLOSED when known.
+    setcomment: updates the status of the abstract channel, as one of ⊥, ⊤, OPEN or CLOSED.
+  - accessor: BufferFlat
+    typename: FlatElement
+    typecast: Flat
+    stringname: Buffer (flat)
+    getcomment: retrieves the size of the queue of the channel as a member of the flat lattice of integers.
+    setcomment: updates the flat representation of the size of the channel queue.
+  - accessor: BufferInterval
+    typename: Interval
+    typecast: Interval
+    stringname: Buffer (interval)
+    getcomment: retrieves the size of the queue of the channel as a member of the interval lattice.
+    setcomment: updates the interval representation of the size of the channel queue.
+  - accessor: Payload
+    typename: AbstractValue
+    typecast: AbstractValue
+    stringname: Payload
+    getcomment: retrieves the abstract payload of the channel, as an abstract value.
+    setcomment: updates the channel payload with the chosen abstract value.

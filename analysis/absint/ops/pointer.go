@@ -5,7 +5,8 @@ import (
 	loc "github.com/cs-au-dk/goat/analysis/location"
 )
 
-// Get all the locations that could be dereferenced
+// ToDeref retrieves all the locations that could be dereferenced
+// by a dereferencing operation.
 func ToDeref(v L.AbstractValue) L.OpOutcomes {
 	OUTCOME, SUCCEEDS, PANICS := L.Consts().OpOutcomes()
 	// The points-to set including only the nil location
@@ -13,13 +14,14 @@ func ToDeref(v L.AbstractValue) L.OpOutcomes {
 
 	pt := v.PointerValue()
 
-	// If the points-to set has nil, dereferencing may panic
+	// If the points-to set contains nil, dereferencing may panic.
 	if pt.HasNil() {
 		OUTCOME = OUTCOME.MonoJoin(PANICS(v.UpdatePointer(PTNIL)))
 	}
 
 	// If the points-to set excluding nil is not empty,
-	// dereferencing may succeed
+	// dereferencing may succeed, and the points-to set for
+	// the successful outcome does not contain nil.
 	if pt := pt.FilterNil(); !pt.Empty() {
 		OUTCOME = OUTCOME.MonoJoin(SUCCEEDS(v.UpdatePointer(pt)))
 	}
@@ -27,6 +29,9 @@ func ToDeref(v L.AbstractValue) L.OpOutcomes {
 	return OUTCOME
 }
 
+// Load models dereferencing an abstract pointer value. It performs
+// the least-upper bound for all the possible values mapped in memory
+// to members of the abstract pointer's points-to set.
 func Load(v L.AbstractValue, mem L.Memory) (res L.AbstractValue) {
 	pt := v.PointerValue()
 
@@ -39,6 +44,3 @@ func Load(v L.AbstractValue, mem L.Memory) (res L.AbstractValue) {
 
 	return res
 }
-
-// Abtract store operation
-// func Store(v L.AbstractValue)

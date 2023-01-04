@@ -2,6 +2,7 @@ package absint
 
 import (
 	"fmt"
+	"go/types"
 	"log"
 
 	"github.com/cs-au-dk/goat/analysis/absint/ops"
@@ -52,15 +53,15 @@ func (o Blocks) PrintPath(G SuperlocGraph, A L.Analysis, g graph.Graph[*ssa.Func
 		preds := make(map[defs.Superloc]link)
 
 		G.ToGraph().BFS(G.Entry(), func(next *AbsConfiguration) bool {
-			nextSl := next.superloc
+			nextSl := next.Superloc
 
 			if sl.Equal(nextSl) {
 				return true
 			}
 
 			for _, succ := range next.Successors {
-				if _, ok := preds[succ.configuration.superloc]; !ok {
-					preds[succ.configuration.superloc] = link{
+				if _, ok := preds[succ.configuration.Superloc]; !ok {
+					preds[succ.configuration.Superloc] = link{
 						succ.transition,
 						nextSl,
 					}
@@ -226,7 +227,7 @@ func BlockAnalysisFiltered(
 	// 	// If the configuration is terminal, if no channel operations are
 	// 	// found at the superlocation, there is definitely no orphan.
 	// 	if len(conf.GetSuccessorMap()) == 0 {
-	// 		sl := conf.Superlocation()
+	// 		sl := conf.Superloc
 	// 		gs, found := sl.FindAll(func(g defs.Goro, cl defs.CtrLoc) bool {
 	// 			// Check that no control location is a stagnated
 	// 			return cl.Node().IsChannelOp()
@@ -242,7 +243,7 @@ func BlockAnalysisFiltered(
 	// 	for _, succ := range conf.GetSuccessorMap() {
 	// 		succRes := CheckForOrphans(
 	// 			succ.Configuration(),
-	// 			visited.Set(conf.Superlocation(), struct{}{}))
+	// 			visited.Set(conf.Superloc, struct{}{}))
 	// 		switch mode {
 	// 		case MAY:
 	// 			res = res && succRes
@@ -305,7 +306,7 @@ func BlockAnalysisFiltered(
 		}
 
 		for _, chn := range toCheck {
-			av, mem := C.swapWildcard(g, st.Memory(), chn)
+			av, mem := C.swapWildcard(sl, g, st.Memory(), chn)
 			chV := L.Consts().BotValue()
 			ops.ToDeref(av).OnSucceed(func(av L.AbstractValue) {
 				chV = ops.Load(av, mem)
@@ -337,8 +338,8 @@ func BlockAnalysisFiltered(
 			}
 		} else if len(comp) == 1 {
 			conf := comp[0]
-			st := result.GetUnsafe(conf.superloc)
-			if !conf.IsSynchronizing(C, st) {
+			st := result.GetUnsafe(conf.Superloc)
+			if !conf.IsCommunicating(C, st) {
 				if len(conf.Successors) == 0 {
 					panic(fmt.Errorf("Expected non-synchronizing configuration %v to have successors!", conf))
 				}
@@ -348,8 +349,8 @@ func BlockAnalysisFiltered(
 			} else {
 				// Skip if one of the goroutines is guaranteed to panic due to
 				// closing or sending on channels that are all _definitely_ closed.
-				_, _, bad = conf.Superlocation().Find(func(g defs.Goro, _ defs.CtrLoc) bool {
-					return definiteCommPanic(conf.Superlocation(), g)
+				_, _, bad = conf.Find(func(g defs.Goro, _ defs.CtrLoc) bool {
+					return definiteCommPanic(conf.Superloc, g)
 				})
 			}
 		} /* else {
@@ -361,17 +362,17 @@ func BlockAnalysisFiltered(
 	}
 
 	G.ForEach(func(conf *AbsConfiguration) {
-		analysis := result.GetUnsafe(conf.Superlocation())
+		analysis := result.GetUnsafe(conf.Superloc)
 
 		// Skip checking for orphans in configurations where a goroutine has
 		// panicked and in non-synchronizing configurations.
-		if conf.IsPanicked() || guaranteedPanic[scc.ComponentOf(conf)] || !conf.IsSynchronizing(C, analysis) {
+		if conf.IsPanicked() || guaranteedPanic[scc.ComponentOf(conf)] || !conf.IsCommunicating(C, analysis) {
 			return
 		}
 
 		// Filter out blocking bugs in configurations where a goroutine has
 		// deadlocked in the context package as these are (most likely) false positives
-		if _, _, deadLockInContext := conf.Superlocation().Find(func(g defs.Goro, cl defs.CtrLoc) bool {
+		if _, _, deadLockInContext := conf.Find(func(g defs.Goro, cl defs.CtrLoc) bool {
 			return isInContext(cl) && !isTerminated(cl) && !mayProgress(transitionSystem, conf, g)
 		}); deadLockInContext {
 			return
@@ -385,7 +386,7 @@ func BlockAnalysisFiltered(
 			}
 
 			// Don't report if the goroutine has no progress because it's guaranteed to panic
-			if definiteCommPanic(conf.Superlocation(), g) {
+			if definiteCommPanic(conf.Superloc, g) {
 				return
 			}
 
@@ -405,8 +406,30 @@ func BlockAnalysisFiltered(
 				ok := false
 			OUT:
 				for _, reg := range cfg.CommunicationPrimitivesOf(cl.Node()) {
+					var toCheck []ssa.Value
 					for _, lab := range C.LoadRes.Pointer.Queries[reg].PointsTo().Labels() {
-						if C.IsPrimitiveFocused(lab.Value()) {
+						toCheck = append(toCheck, lab.Value())
+					}
+
+					if _, isItf := reg.Type().Underlying().(*types.Interface); isItf {
+						// "Dereference the interface"
+						var newCheck []ssa.Value
+						for _, site := range toCheck {
+							mkItf, ok := site.(*ssa.MakeInterface)
+							if !ok {
+								panic(fmt.Sprintf("Allocation site of interface %s is not a MakeInterface instruction?", site))
+							}
+
+							for _, lab := range C.LoadRes.Pointer.Queries[mkItf.X].PointsTo().Labels() {
+								newCheck = append(newCheck, lab.Value())
+							}
+						}
+
+						toCheck = newCheck
+					}
+
+					for _, site := range toCheck {
+						if C.IsPrimitiveFocused(site) {
 							ok = true
 							break OUT
 						}
@@ -420,13 +443,13 @@ func BlockAnalysisFiltered(
 
 			if !mayProgress(transitionSystem, conf, g) {
 				for _, prim := range cfg.CommunicationPrimitivesOf(cl.Node()) {
-					av, _ := C.swapWildcard(g, analysis.Memory(), prim)
+					av, _ := C.swapWildcard(conf.Superloc, g, analysis.Memory(), prim)
 					if av.PointerValue().Eq(L.Consts().PointsToNil()) {
 						log.Printf("Potential false positive in %v: %v = {nil}\n", cl.Node(), prim.Name())
 					}
 				}
 
-				res.register(conf.Superlocation(), g)
+				res.register(conf.Superloc, g)
 				prevFound[cl] = struct{}{}
 			}
 		})

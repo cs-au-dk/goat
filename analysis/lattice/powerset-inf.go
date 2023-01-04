@@ -11,19 +11,23 @@ import (
 	"github.com/benbjohnson/immutable"
 )
 
+// InfSetLattice is a powerset lattice derived from the (possibly) infinite set of elements of the given type.
 type InfSetLattice[T any] struct {
 	lattice
 	hasher immutable.Hasher[T]
 }
 
+// Bot returns the empty set belonging to the infinite powerset lattice.
 func (m *InfSetLattice[T]) Bot() Element {
 	return InfSet[T]{element{m}, tree.NewTree[T, struct{}](m.hasher)}
 }
 
+// Top cannot be invoked on the infinite powerset lattice.
 func (m *InfSetLattice[T]) Top() Element {
 	panic(errUnsupportedOperation)
 }
 
+// Eq checks for referencial equality with another powerset lattice.
 func (m *InfSetLattice[T]) Eq(o Lattice) bool {
 	return m == o
 }
@@ -43,6 +47,7 @@ func MakeInfSetLatticeH[T utils.HashableEq[T]]() *InfSetLattice[T] {
 	return &InfSetLattice[T]{hasher: utils.HashableHasher[T]()}
 }
 
+// InfSet is a member of a given infinite powerset.
 type InfSet[T any] struct {
 	element
 	set tree.Tree[T, struct{}]

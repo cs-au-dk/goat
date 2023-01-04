@@ -1,0 +1,18 @@
+# Intra-processual charges description
+
+name: Charges
+implementation: tree
+informal-lattice: lattice of charged return edges
+description: |
+  is a member of the lattice of charged edges, binding control locations
+  to sets of charged control locations, that another control location may
+  transfer control flow to as a continuation.
+description-lattice: |
+  is the lattice of charged return edges, encompassing all possible bindings
+  from control locations to charged control location sets, that the key control
+  location may transfer control flow to.
+informal: charge binding
+key: defs.CtrLoc
+informal-key: control location
+value: InfSet[defs.CtrLoc]
+informal-value: charge set

@@ -1,9 +1,19 @@
 package lattice
 
+// MutexLattice is the lattice of locks. It is represented as a flat finite lattice with elements
+// LOCKED and UNLOCKED.
+/*
+	      ⊤
+	     / \
+	LOCKED UNLOCKED
+	     \ /
+	      ⊥
+*/
 type MutexLattice struct {
 	FlatFiniteLattice
 }
 
+// mutexLattice is the singleton instantiation of the mutex lattice.
 var mutexLattice = func() *MutexLattice {
 	lat := &MutexLattice{*latFact.Flat(true, false)}
 	lat.init(lat)

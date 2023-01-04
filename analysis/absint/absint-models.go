@@ -66,7 +66,7 @@ func (C AnalysisCtxt) stdInvoke(g defs.Goro,
 
 // TODO: too ad-hoc...
 func (C AnalysisCtxt) stdCall(
-	g defs.Goro, cl defs.CtrLoc,
+	sl defs.Superloc, g defs.Goro, cl defs.CtrLoc,
 	call ssa.CallInstruction,
 	state L.AnalysisState, fun *ssa.Function,
 ) (rsuccs L.AnalysisIntraprocess, hasModel bool) {
@@ -192,7 +192,7 @@ func (C AnalysisCtxt) stdCall(
 		return constructTimer()
 	case "(*sync.RWMutex).RLocker":
 		if !utils.Opts().SkipSync() {
-			lockVal := evaluateSSA(g, mem, call.Common().Args[0])
+			lockVal := EvaluateSSA(g, mem, call.Common().Args[0])
 			mops := L.MemOps(mem)
 			ptr := mops.HeapAlloc(allocSite, lockVal)
 			return updMem(mops.Memory().Update(callLoc, ptr))
@@ -201,7 +201,7 @@ func (C AnalysisCtxt) stdCall(
 		// Set channel passed to Notify as a top channel.
 		// TODO: This can be improved, e. g. closing a Notify channel is unsafe, since that
 		// channel could be erroneously closed.
-		if ch := evaluateSSA(g, mem, call.Common().Args[0]); ch.IsWildcard() {
+		if ch := EvaluateSSA(g, mem, call.Common().Args[0]); ch.IsWildcard() {
 			return updMem(mem)
 		} else {
 			return updMem(mem.LocsToTop(ch.PointerValue().NonNilEntries()...))
@@ -218,10 +218,10 @@ func (C AnalysisCtxt) stdCall(
 
 		// TODO: Panic when the receiver can be nil (or maybe it is already handled earlier?)
 
-		wrapped, mem, _ := C.wrapPointers(g, mem, call.Common().Args[0], 0)
+		wrapped, mem, _ := C.wrapPointers(sl, g, mem, call.Common().Args[0], 0)
 		fieldPointers := wrapped.PointerValue()
 
-		toStore, mem := C.swapWildcard(g, mem, call.Common().Args[1])
+		toStore, mem := C.swapWildcard(sl, g, mem, call.Common().Args[1])
 		// TODO: Panic when storing nil
 		toStore = toStore.UpdatePointer(toStore.PointerValue().FilterNil())
 
@@ -234,7 +234,7 @@ func (C AnalysisCtxt) stdCall(
 		return updMem(mops.Memory())
 	case "(*sync/atomic.Value).Load":
 		// TODO: Panic when the receiver can be nil (or maybe it is already handled earlier?)
-		wrapped, mem, _ := C.wrapPointers(g, mem, call.Common().Args[0], 0)
+		wrapped, mem, _ := C.wrapPointers(sl, g, mem, call.Common().Args[0], 0)
 		return updMem(mem.Update(callLoc, A.Load(wrapped, mem)))
 
 	case "runtime.Goexit",

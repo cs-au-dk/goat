@@ -21,7 +21,7 @@ func (s0 *AbsConfiguration) OldVisualize() {
 			"minlen":  fmt.Sprint(opts.Minlen()),
 			"nodesep": fmt.Sprint(opts.Nodesep()),
 			"rankdir": "TB",
-			"label":   "Futures for thread " + s0.Target.String(),
+			"label":   "Futures for thread " + s0.Main().String(),
 			// Necessary to ensure that ordering within clusters is kept.
 			// See https://stackoverflow.com/questions/33959969/order-cluster-nodes-in-graphviz
 			"remincross": "false",
@@ -51,9 +51,6 @@ func (s0 *AbsConfiguration) OldVisualize() {
 	addConfigurationCluster := func(s *AbsConfiguration, synced defs.Goro) {
 		// Choose a different bgcolor if the target thread has progressed
 		bgcolor := "#FFD581"
-		if s.Threads().GetUnsafe(s.Target) != s0.Threads().GetUnsafe(s.Target) {
-			bgcolor = "#00e544"
-		}
 
 		idStr := strconv.Itoa(configCounter)
 		configCounter++
@@ -69,7 +66,7 @@ func (s0 *AbsConfiguration) OldVisualize() {
 
 		// Ensure consistent ordering in cluster by sorting by thread ID
 		gs := make(map[uint32]defs.Goro)
-		itids := make([]int, 0, s.Threads().Size())
+		itids := make([]int, 0, s.Size())
 		s.ForEach(func(g defs.Goro, _ defs.CtrLoc) {
 			gs[g.Hash()] = g
 			itids = append(itids, (int)(g.Hash()))
@@ -88,7 +85,7 @@ func (s0 *AbsConfiguration) OldVisualize() {
 			// 	continue
 			// }
 			g := gs[tid]
-			loc, _ := s.Threads().Get(g)
+			loc, _ := s.Get(g)
 			threadNode := &dot.DotNode{
 				ID: idStr + ":" + g.String(),
 				Attrs: dot.DotAttrs{
@@ -130,20 +127,20 @@ func (s0 *AbsConfiguration) OldVisualize() {
 	targetCluster := &dot.DotCluster{
 		ID: "Target operation",
 		Nodes: []*dot.DotNode{{
-			ID: s0.Target.String() + ":start",
+			ID: s0.Main().String() + ":start",
 			Attrs: dot.DotAttrs{
 				"fillcolor": "#99d7f7",
-				"label":     s0.Threads().GetUnsafe(s0.Target).Node().String(),
+				"label":     s0.GetUnsafe(s0.Main()).Node().String(),
 			},
 		}},
 		Attrs: dot.DotAttrs{
-			"label":   "Target operation on thread " + s0.Target.String(),
+			"label":   "Target operation on thread " + s0.Main().String(),
 			"bgcolor": "#AAF7FF",
 		},
 	}
 
 	G.Clusters = []*dot.DotCluster{targetCluster}
-	addConfigurationCluster(s0, s0.Target)
+	addConfigurationCluster(s0, s0.Main())
 
 	for len(queue) > 0 {
 		conf := queue[0]
@@ -162,13 +159,7 @@ func (s0 *AbsConfiguration) OldVisualize() {
 			// on the type of transition.
 			if tr, isSync := succ.Transition().(T.Sync); isSync {
 				if configurationToCluster[conf1] == nil {
-					synced := s0.Target
-					switch {
-					case tr.Progressed1.Equal(s0.Target):
-						synced = tr.Progressed2
-					case tr.Progressed2.Equal(s0.Target):
-						synced = tr.Progressed1
-					}
+					synced := s0.Main()
 					addConfigurationCluster(conf1, synced)
 					queue = append(queue, conf1)
 				}
@@ -190,7 +181,7 @@ func (s0 *AbsConfiguration) OldVisualize() {
 				addEdge(from2, to2, attrs)
 			} else {
 				if configurationToCluster[conf1] == nil {
-					addConfigurationCluster(conf1, s0.Target)
+					addConfigurationCluster(conf1, s0.Main())
 					queue = append(queue, conf1)
 				}
 

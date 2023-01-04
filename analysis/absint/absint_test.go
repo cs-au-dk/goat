@@ -18,7 +18,7 @@ func loadProgram(t *testing.T, content string) AnalysisCtxt {
 	loadRes := testutil.LoadPackageFromSource(t, "testpackage", content)
 
 	if opts.Visualize() {
-		loadRes.Cfg.Visualize(loadRes.Pointer)
+		loadRes.Cfg.Visualize(&loadRes.Pointer.Result)
 	}
 
 	ctxt := PrepareAI().FunctionByName("tmain", false)(loadRes)
@@ -48,7 +48,7 @@ func TestAbstractInterpretation(t *testing.T) {
 
 	// Check if the testpackage has a bool variable named ubool. If so, give it a top value.
 	injectUBool := func(ctxt *AnalysisCtxt) {
-		if glob := ctxt.InitConf.Target.CtrLoc().Root().Package().Var("ubool"); glob != nil {
+		if glob := ctxt.InitConf.Main().CtrLoc().Root().Package().Var("ubool"); glob != nil {
 			state := ctxt.InitState
 			ctxt.InitState = state.UpdateMemory(state.Memory().Update(
 				loc.GlobalLocation{Site: glob},
@@ -61,7 +61,7 @@ func TestAbstractInterpretation(t *testing.T) {
 		return func(t *testing.T, ctxt AnalysisCtxt) {
 			injectUBool(&ctxt)
 			conf, _ := CoarseProgress(ctxt)
-			node := conf.Threads().GetUnsafe(ctxt.InitConf.Target).Node()
+			node := conf.GetUnsafe(ctxt.InitConf.Main()).Node()
 			if _, ok := node.(*cfg.TerminateGoro); expectFinish && !ok {
 				t.Error("The main thread did not reach its exit:", node)
 			}
@@ -78,7 +78,7 @@ func TestAbstractInterpretation(t *testing.T) {
 		),
 	) absIntTestFunc {
 		return func(t *testing.T, ctxt AnalysisCtxt) {
-			g := ctxt.InitConf.Target
+			g := ctxt.InitConf.Main()
 			mem, testFunc := makeTest(t, g, ctxt.InitState.Memory())
 			ctxt.InitState = ctxt.InitState.UpdateMemory(mem)
 			injectUBool(&ctxt)
@@ -97,7 +97,7 @@ func TestAbstractInterpretation(t *testing.T) {
 			}
 
 			for _, succ := range succs {
-				cl := succ.Configuration().Threads().GetUnsafe(g)
+				cl := succ.Configuration().GetUnsafe(g)
 				if _, ok := cl.Node().(*cfg.TerminateGoro); !ok {
 					t.Fatal("The main thread did not reach its exit:", cl)
 				}
@@ -220,7 +220,7 @@ func TestAbstractInterpretation(t *testing.T) {
 		return mem, func(val L.AbstractValue) {
 			if val.IsStruct() {
 				// Unwrap array
-				val = val.StructValue().Get(-2).AbstractValue()
+				val = val.StructValue().Get(loc.AINDEX).AbstractValue()
 			}
 
 			if !val.IsBasic() {
@@ -234,12 +234,12 @@ func TestAbstractInterpretation(t *testing.T) {
 	// Checks that the result of silent transitions contains a configuration where g is panicked
 	checkMayPanic := func(t *testing.T, ctxt AnalysisCtxt) {
 		injectUBool(&ctxt)
-		g := ctxt.InitConf.Target
+		g := ctxt.InitConf.Main()
 		succs := ctxt.InitConf.GetSilentSuccessors(ctxt, g, ctxt.InitState)
 
 		found := false
 		for _, succ := range succs {
-			node := succ.Configuration().Threads().GetUnsafe(g)
+			node := succ.Configuration().GetUnsafe(g)
 			if node.Panicked() {
 				found = true
 				break
@@ -254,14 +254,14 @@ func TestAbstractInterpretation(t *testing.T) {
 	// Checks that the result of silent transitions only contains configurations where g is panicked
 	checkMustPanic := func(t *testing.T, ctxt AnalysisCtxt) {
 		injectUBool(&ctxt)
-		g := ctxt.InitConf.Target
+		g := ctxt.InitConf.Main()
 		succs := ctxt.InitConf.GetSilentSuccessors(ctxt, g, ctxt.InitState)
 		if len(succs) == 0 {
 			t.Fatalf("0 successors? %v", succs)
 		}
 
 		for _, succ := range succs {
-			node := succ.Configuration().Threads().GetUnsafe(g)
+			node := succ.Configuration().GetUnsafe(g)
 			if !node.Panicked() {
 				t.Error("Found a successor where", g, "has not panicked")
 				break
@@ -927,6 +927,16 @@ func TestAbstractInterpretation(t *testing.T) {
 			rvalEq(L.Consts().BasicTopValue()),
 		},
 		{
+			"itf_escaped",
+			`func external(any)
+			func tmain() int {
+				var i any = 10
+				external(i)
+				return i.(int)
+			}`,
+			rvalEq(L.Elements().AbstractBasic(int64(10))),
+		},
+		{
 			"go_builtin",
 			`func tmain() {
 				i := 20
@@ -976,7 +986,7 @@ func TestAbstractInterpretation(t *testing.T) {
 				defer f(3)
 			}`,
 			func(t *testing.T, ctxt AnalysisCtxt) {
-				tid := ctxt.InitConf.Target
+				tid := ctxt.InitConf.Main()
 				succs := ctxt.InitConf.GetTransitions(ctxt, ctxt.InitState)
 				if len(succs) != 1 {
 					t.Fatal("Not exactly one possible successor?", succs)
@@ -1264,6 +1274,81 @@ func TestAbstractInterpretation(t *testing.T) {
 					}
 				}
 			}),
+		},
+		{
+			"slice_cap_top",
+			`func tmain() int {
+				s := []int{}
+				return cap(s)
+			}`,
+			rvalEq(L.Consts().BasicTopValue()),
+		},
+		{
+			"chan_cap_nil",
+			`func tmain() int {
+				var ch chan int
+				return cap(ch)
+			}`,
+			rvalEq(L.Elements().AbstractBasic(int64(0))),
+		},
+		{
+			"chan_cap_0",
+			`func tmain() int {
+				ch := make(chan int, 0)
+				return cap(ch)
+			}`,
+			rvalEq(L.Elements().AbstractBasic(int64(0))),
+		},
+		{
+			"chan_cap_1",
+			`func tmain() int {
+				ch := make(chan int, 1)
+				return cap(ch)
+			}`,
+			rvalEq(L.Elements().AbstractBasic(int64(1))),
+		},
+		{
+			"chan_cap_certain",
+			`var ubool bool
+
+			func tmain() int {
+				var ch chan int
+				if ubool {
+					ch = make(chan int, 1)
+				} else {
+					ch = make(chan int, 1)
+				}
+				return cap(ch)
+			}`,
+			rvalEq(L.Elements().AbstractBasic(int64(1))),
+		},
+		{
+			"chan_cap_uncertain",
+			`var ubool bool
+
+			func tmain() int {
+				var ch chan int
+				if ubool {
+					ch = make(chan int, 1)
+				}
+				return cap(ch)
+			}`,
+			rvalEq(L.Consts().BasicTopValue()),
+		},
+		{
+			"chan_cap_uncertain_2",
+			`var ubool bool
+
+			func tmain() int {
+				var ch chan int
+				if ubool {
+					ch = make(chan int, 1)
+				} else {
+					ch = make(chan int, 2)
+				}
+				return cap(ch)
+			}`,
+			rvalEq(L.Consts().BasicTopValue()),
 		},
 		{
 			"builtin_panic",

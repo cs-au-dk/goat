@@ -1,30 +1,42 @@
 package lattice
 
-//go:generate go run generate-product.go ChannelInfo Capacity,FlatElement,Flat,Capacity Status,FlatElement,Flat,Open? "BufferFlat,FlatElement,Flat,Buffer (flat)" "BufferInterval,Interval,Interval,Buffer (interval)" Payload,AbstractValue,AbstractValue,Payload
+//go:generate go run generate-product.go channelinfo
 
-/* Information about channels used during abstract interpretation. */
+// ChannelInfoLattice is the lattice of abstract channels.
 type ChannelInfoLattice struct {
 	ProductLattice
 }
 
+// ChannelInfo yields the abstract channel lattice.
 func (latticeFactory) ChannelInfo() *ChannelInfoLattice {
 	return channelInfoLattice
 }
 
+// channelInfoLattice is the singleton instantiation of the abstract channel lattice.
 var channelInfoLattice *ChannelInfoLattice = &ChannelInfoLattice{
 	*latFact.Product(
-		// Capacity - a flat approximation of the channel capacity
+		// Capacity is an approximation of the channel capacity as a flat lattice.
 		flatIntLattice,
-		// Status - is a channel open or closed?
+		// Status encodes whether a channel is open or closed.
 		latFact.Flat(true, false),
-		// BufferFlat - flat information for channel buffers
+		// BufferFlat is an approximation of the current size of the channel's queue as a flat lattice.
 		flatIntLattice,
-		// BufferInterval - interval information for channel buffers
+		// BufferInterval approximates the size of the current queue as an interval lattice.
 		intervalLattice,
-		// Payload - information registered at the buffer
+		// Payload approximates the values stored in the channel's buffer.
+		// Due to circular dependency with the abstract value lattice, the channel lattice
+		// is extended with the payload component during initialization.
 	),
 }
 
+func init() {
+	// Extend channel lattice with the payload component, as the lattice of abstract values.
+	channelInfoLattice.Extend(valueLattice)
+
+	_checkChannelInfo(channelInfoLattice.Bot().ChannelInfo())
+}
+
+// Top returns the ⊤ value of an abstract channel.
 func (c *ChannelInfoLattice) Top() Element {
 	return ChannelInfo{
 		element: element{lattice: c},
@@ -32,6 +44,7 @@ func (c *ChannelInfoLattice) Top() Element {
 	}
 }
 
+// Bot returns the ⊥ value of an abstract channel.
 func (c *ChannelInfoLattice) Bot() Element {
 	return ChannelInfo{
 		element: element{lattice: c},
@@ -39,15 +52,9 @@ func (c *ChannelInfoLattice) Bot() Element {
 	}
 }
 
-func init() {
-	// What a hack... mutual dependency between channel info and value lattice.
-	// Extend with value for payload.
-	channelInfoLattice.Extend(valueLattice)
-
-	_checkChannelInfo(channelInfoLattice.Bot().ChannelInfo())
-}
-
-func (elementFactory) ChannelInfo(cap FlatElement, open bool, flat Element, inter Element) ChannelInfo {
+// ChannelInfo creates an abstract channel value based on the provided values for
+// capacity, status, and queue length approximations.
+func (elementFactory) ChannelInfo(cap FlatElement, open bool, flat, inter Element) ChannelInfo {
 	status := channelInfoLattice.Status()
 
 	return ChannelInfo{
@@ -92,6 +99,11 @@ func (m ChannelInfo) JoinPayload(p AbstractValue) ChannelInfo {
 
 func (m ChannelInfo) MeetStatus(c FlatElement) ChannelInfo {
 	return m.UpdateStatus(m.Status().Meet(c).Flat())
+}
+
+// CapacityKnown checks whether the capacity is a known constant
+func (m ChannelInfo) CapacityKnown() bool {
+	return !(m.Capacity().IsTop() || m.Capacity().IsBot())
 }
 
 // Checks whether the flat buffer is known

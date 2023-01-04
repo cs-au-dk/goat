@@ -7,11 +7,14 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
+// Short-hands for commonly used variables and operations
 var (
 	opts         = utils.Opts()
 	task         = opts.Task()
 	verbosePrint = utils.VerbosePrint
-	isLocal      = func(v ssa.Value) bool {
+
+	// isLocal checks that an SSA value is in a local package.
+	isLocal = func(v ssa.Value) bool {
 		if !opts.LocalPackages() {
 			return true
 		}

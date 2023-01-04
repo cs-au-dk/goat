@@ -11,8 +11,10 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
+// _LOOP_TYPE is an enumeration of loop types.
 type _LOOP_TYPE int
 
+// Types of loop
 const (
 	_NOT_UNROLLABLE _LOOP_TYPE = iota
 	_INCREMENTING_LOOP
@@ -25,7 +27,7 @@ type unroll struct {
 	// The following denote a loop as unsafe:
 	// - Side effects on the index in the body of the loop
 	// - "goto" statements
-	// - "break" and "continue" statements at the level of loop's scope
+	// - "break" and "continue" statements at the level of the loop's scope
 	safe bool
 }
 
@@ -74,11 +76,6 @@ func (u *unroll) Const(e ast.Expr) int {
 			if err == nil {
 				return v
 			}
-			// case token.FLOAT:
-			// 	v, err := strconv.ParseFloat(e.Value, 64)
-			// 	if err != nil {
-			// 		return v
-			// 	}
 		}
 	case *ast.UnaryExpr:
 		if e.Op == token.SUB {
@@ -103,36 +100,16 @@ func (u *unroll) Bound(e ast.Expr) int {
 		case e.Op == token.LSS:
 			switch {
 			case u.isConst(e.Y):
-				return u.Const(e.Y) - 1
-				// switch c := c.(type) {
-				// case int:
-				// 	return c - 1
-				// case float64:
-				// }
+				return u.Const(e.Y) - 17
 			case u.isConst(e.X):
-				return u.Const(e.X) + 1
-				// switch c := c.(type) {
-				// case int:
-				// 	return c + 1
-				// case float64:
-				// }
+				return u.Const(e.X) + 17
 			}
 		case e.Op == token.GTR:
 			switch {
 			case u.isConst(e.Y):
-				return u.Const(e.Y) + 1
-				// switch c := c.(type) {
-				// case int:
-				// 	return c + 1
-				// case float64:
-				// }
+				return u.Const(e.Y) + 17
 			case u.isConst(e.X):
-				return u.Const(e.X) - 1
-				// switch c := c.(type) {
-				// case int:
-				// case float64:
-				// 	return c - 1
-				// }
+				return u.Const(e.X) - 17
 			}
 		}
 	}
@@ -150,21 +127,26 @@ func (u *unroll) isIdent(x ast.Expr) bool {
 	return false
 }
 
+// safetyVisitor checks that a loop is safe to unroll, by not containing
+// break and continue statements in scope.
 type safetyVisitor struct {
 	breakInScope    bool
 	continueInScope bool
 	unroller        *unroll
 }
 
+// newSafetyVisitor creates a safety visitor.
 func newSafetyVisitor(u *unroll) *safetyVisitor {
 	return &safetyVisitor{true, true, u}
 }
 
+// isBodyUnrollable checks that a loop body does not exclude it from unrolling.
 func (u *unroll) isBodyUnrollable(s *ast.BlockStmt) bool {
 	ast.Walk(newSafetyVisitor(u), s)
 	return u.safe
 }
 
+// Visit makes the safety visitor implement the ast.Visitor pattern.
 func (s *safetyVisitor) Visit(n ast.Node) ast.Visitor {
 	if s == nil {
 		return nil
@@ -220,6 +202,7 @@ func (s *safetyVisitor) Visit(n ast.Node) ast.Visitor {
 	return s
 }
 
+// isUnrollableInit checks that the initialization statement does not exclude the loop from unrolling.
 func (u *unroll) isUnrollableInit(s ast.Stmt) (unrollable bool, initVal int) {
 	switch s := s.(type) {
 	case *ast.AssignStmt:
@@ -272,6 +255,8 @@ func (u *unroll) isUnrollableCond(e ast.Expr) (loop _LOOP_TYPE, bound int) {
 	return
 }
 
+// isUnrollablePost checks that a loop is not disqualified from unrolling due to a post statement,
+// and if not, what kind of loop it is.
 func (u *unroll) isUnrollablePost(s ast.Stmt) (loop _LOOP_TYPE, incr int) {
 	switch s := s.(type) {
 	case *ast.AssignStmt:
@@ -333,6 +318,7 @@ func (u *unroll) isUnrollablePost(s ast.Stmt) (loop _LOOP_TYPE, incr int) {
 	return
 }
 
+// Transform is the transformation function to apply on the current AST cursor.
 func Transform(c *astutil.Cursor) bool {
 	switch s := c.Node().(type) {
 	case *ast.ForStmt:
@@ -369,9 +355,9 @@ func Transform(c *astutil.Cursor) bool {
 			}
 
 			block := &ast.BlockStmt{
-				s.For,
-				stmts,
-				s.Body.Rbrace,
+				Lbrace: s.For,
+				List:   stmts,
+				Rbrace: s.Body.Rbrace,
 			}
 
 			c.Replace(block)
@@ -381,12 +367,14 @@ func Transform(c *astutil.Cursor) bool {
 	return true
 }
 
-// Loop unroller will recursively trasnform the AST,
+// UnrollLoops will recursively transform the AST,
 // by turning for statements of the form:
 // for init; guard; iter { S }
 // ==>
 // init; { S; iter }; ...; { S; iter }
-// 			 ---------n times-------------
+//
+//	---------n times-------------
+//
 // where, given "i" as an iteration index,
 // "i" is not mutated in the body of the loop, and:
 // init - Is an initialization of the form:

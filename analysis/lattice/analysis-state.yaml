@@ -1,0 +1,19 @@
+# Analysis state description.
+
+name: AnalysisState
+description: AnalysisState is a member of the lattice of abstract states.
+informal: abstract state
+lattice: lattice of abstract states.
+fields:
+  - accessor: Memory
+    typename: Memory
+    typecast: Memory
+    stringname: Memory
+    getcomment: retrieves the abstract memory of the abstract state.
+    setcomment: updates the abstract memory in the abstract state.
+  - accessor: ThreadCharges
+    typename: ThreadCharges
+    typecast: ThreadCharges
+    stringname: Charges
+    getcomment: retrieves the charges of every thread in the abstract state.
+    setcomment: updates the sets of thread charges in the abstract state.

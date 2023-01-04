@@ -84,8 +84,7 @@ func (s *Stopper) Quiesce() {
 func (s *Stopper) Stop() {
 	s.Quiesce()
 	close(s.stopper)
-	// We do not model waitgroups yet, so we can't detect this bug
-	s.stop.Wait() // @ blocks(g2)
+	s.stop.Wait() //@ blocks(main)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	close(s.stopped)

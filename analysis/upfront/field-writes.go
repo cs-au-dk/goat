@@ -13,7 +13,6 @@ import (
 
 	"github.com/fatih/color"
 	"golang.org/x/tools/container/intsets"
-	"golang.org/x/tools/go/pointer"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/types/typeutil"
 )
@@ -24,6 +23,9 @@ type A = struct { s struct { f, g int } }
 func w(a *A) { a.s.f = 10 }
 */
 
+// WrittenFields computes the sets of heap locations that may be written to
+// in a specific DAG component. Each DAG component has a unique identifier
+// which at which a specific set is bound.
 type WrittenFields struct {
 	typMap          typeutil.Map
 	callDAG         graph.SCCDecomposition[*ssa.Function]
@@ -98,10 +100,10 @@ func (w WrittenFields) IsFieldWrittenFromFunction(fun *ssa.Function, typ *T.Stru
 	}
 }
 
-func ComputeWrittenFields(pt *pointer.Result, callDAG graph.SCCDecomposition[*ssa.Function]) WrittenFields {
+func ComputeWrittenFields(pt *PointerResult, callDAG graph.SCCDecomposition[*ssa.Function]) WrittenFields {
 	components := callDAG.Components
 	if len(components) == 0 || len(components[0]) == 0 {
-		panic("???")
+		panic("Empty call DAG provided to side-effect analysis")
 	}
 
 	typMap := typeutil.Map{}
@@ -152,11 +154,8 @@ func ComputeWrittenFields(pt *pointer.Result, callDAG graph.SCCDecomposition[*ss
 								if _, ok := accesses[0].(ArrayAccess); ok {
 									*slices = (*slices).Add(allocSite)
 								}
-							} else {
-								alloc, ok := allocSite.(*ssa.Alloc)
-								if !ok || alloc.Heap {
-									*pointers = (*pointers).Add(allocSite)
-								}
+							} else if alloc, ok := allocSite.(*ssa.Alloc); !ok || alloc.Heap {
+								*pointers = (*pointers).Add(allocSite)
 							}
 
 							ptr, ok := allocSite.Type().Underlying().(*T.Pointer)

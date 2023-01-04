@@ -1,7 +1,8 @@
 package absint
 
 import (
-	"log"
+	"bytes"
+	"fmt"
 	"sort"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	tu "github.com/cs-au-dk/goat/testutil"
 
 	"github.com/fatih/color"
+	"github.com/sebdah/goldie/v2"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -44,15 +46,23 @@ gobench/goker/blocking/moby/4395`, "\n")[1:]
 
 	metrics = blockAnalysisMetrics{}
 	for _, test := range tu.ListGoKerPackages(t, "../..") {
-		included := false
-		for _, curated := range tests {
-			if strings.HasPrefix(test, curated) && test == curated {
-				included = true
-				break
+		test := test
+		_ = tests
+		/*
+			included := false
+			for _, curated := range tests {
+				if strings.HasPrefix(test, curated) && test == curated {
+					included = true
+					break
+				}
 			}
-		}
 
-		if !included {
+			if !included {
+				continue
+			}
+		*/
+
+		if strings.HasSuffix(test, "_fixed") {
 			continue
 		}
 
@@ -71,13 +81,21 @@ gobench/goker/blocking/moby/4395`, "\n")[1:]
 
 					computeDominator := G.DominatorTree(entry)
 
-					ps, primsToUses := gotopo.GetPrimitives(entry, loadRes.Pointer, G)
+					_, primsToUses := gotopo.GetPrimitives(entry, loadRes.Pointer, G, false)
 
 					// GCatch PSets
 					psets := gotopo.GetGCatchPSets(
 						loadRes.Cfg, entry, loadRes.Pointer, G,
-						computeDominator, callDAG, ps,
+						computeDominator, callDAG, primsToUses,
 					)
+					//psets := gotopo.GetSCCPSets(callDAG, primsToUses, loadRes.Pointer)
+					/*
+						pset := utils.MakeSSASet()
+						for prim := range primsToUses {
+							pset = pset.Add(prim)
+						}
+						psets = append(psets, pset)
+					*/
 
 					// Ensure consistent ordering
 					sort.Slice(psets, func(i, j int) bool {
@@ -90,7 +108,7 @@ gobench/goker/blocking/moby/4395`, "\n")[1:]
 
 					for i, pset := range psets {
 						t.Log(color.CyanString("PSet"), i+1, color.CyanString("of"), len(psets), color.CyanString(":"))
-						t.Log(pset, "\n")
+						t.Log(pset)
 
 						funs := []*ssa.Function{}
 						pset.ForEach(func(v ssa.Value) {
@@ -106,21 +124,21 @@ gobench/goker/blocking/moby/4395`, "\n")[1:]
 						loweredEntry := computeDominator(funs...)
 						t.Log("Using", loweredEntry, "as entrypoint")
 
-						C := ConfigAI(AIConfig{Metrics: true}).Function(loweredEntry)(loadRes)
+						C := AIConfig{Metrics: true}.Function(loweredEntry)(loadRes)
 						C.FragmentPredicateFromPrimitives(pset.Entries(), primsToUses)
 
-						C.Metrics.TimerStart()
+						C.TimerStart()
 						ts, analysis := StaticAnalysis(C)
 
 						//log.Println("Superlocation graph size:", ts.Size())
 
-						switch C.Metrics.Outcome {
+						switch C.Outcome {
 						case OUTCOME_PANIC:
-							log.Println(color.RedString("Aborted!"))
-							log.Println(C.Metrics.Error())
+							t.Log(color.RedString("Aborted!"))
+							t.Log(C.Error())
 						default:
-							C.Metrics.Done()
-							log.Println(color.GreenString("SA completed in %s", C.Metrics.Performance()))
+							C.Done()
+							t.Log(color.GreenString("SA completed in %s", C.Performance()))
 
 							blocks.UpdateWith(BlockAnalysis(C, ts, analysis))
 						}
@@ -151,22 +169,27 @@ gobench/goker/blocking/moby/4395`, "\n")[1:]
 						}
 					}
 
+					fnBefore, tpBefore := metrics.falseNegatives, metrics.truePositives
+					fns := []string{}
 					tu.MakeNotesManager(t, loadRes).ForEachAnnotation(func(a tu.Annotation) {
 						if ann, ok := a.(tu.AnnBlocks); ok {
-							isChOp := false
-							for node := range ann.Nodes() {
-								if node.IsChannelOp() {
-									isChOp = true
-									break
+							/*
+								isChOp := false
+								for node := range ann.Nodes() {
+									if node.IsChannelOp() {
+										isChOp = true
+										break
+									}
 								}
-							}
 
-							if !isChOp {
-								return
-							}
+								if !isChOp {
+									return
+								}
+							*/
 
 							if !blocks.Exists(findCl(ann)) {
-								t.Error("False negative:", ann)
+								t.Log("False negative:", ann)
+								fns = append(fns, ann.String())
 								metrics.falseNegatives++
 							} else {
 								metrics.truePositives++
@@ -174,12 +197,24 @@ gobench/goker/blocking/moby/4395`, "\n")[1:]
 						}
 					})
 
+					// Construct golden test output.
+					// This helps us detect advances and regressions in detected bugs.
+					fnCnt := metrics.falseNegatives - fnBefore
+					tpCnt := metrics.truePositives - tpBefore
+
+					var out bytes.Buffer
+					sort.Strings(fns)
+					fmt.Fprintf(&out, "TP: %d FN: %d\n%s\n", tpCnt, fnCnt, strings.Join(fns, "\n"))
+
+					goldie.New(t).Assert(t, t.Name(), out.Bytes())
+
 					if t.Failed() {
 						t.Log("Detected blocks:\n", blocks)
 					}
-				})
+				},
+			)
 		})
 	}
 
-	//t.Log(metrics)
+	// t.Logf("%+v", metrics)
 }

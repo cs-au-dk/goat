@@ -8,6 +8,7 @@ import (
 	"github.com/cs-au-dk/goat/utils"
 )
 
+// Lock is a transition resulting from a (*sync.{Mutex,RWMutex}).Lock operation
 type Lock struct {
 	transitionSingle
 	Mu loc.Location
@@ -29,6 +30,7 @@ func NewLock(progressed defs.Goro, mu loc.Location) Lock {
 	return Lock{transitionSingle{progressed}, mu}
 }
 
+// Unlock is a transition resuting from a (*sync.{Mutex,RWMutex}).Unlock operation
 type Unlock struct {
 	transitionSingle
 	Mu loc.Location
@@ -50,6 +52,7 @@ func NewUnlock(progressed defs.Goro, mu loc.Location) Unlock {
 	return Unlock{transitionSingle{progressed}, mu}
 }
 
+// RLock is a transition resuting from a (*sync.RWMutex).RLock operation.
 type RLock struct {
 	transitionSingle
 	Mu loc.Location
@@ -71,6 +74,7 @@ func NewRLock(progressed defs.Goro, mu loc.Location) RLock {
 	return RLock{transitionSingle{progressed}, mu}
 }
 
+// RUnlock is a transition resuting from a (*sync.RWMutex).RUnlock operation.
 type RUnlock struct {
 	transitionSingle
 	Mu loc.Location

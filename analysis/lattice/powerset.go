@@ -5,8 +5,10 @@ import (
 	"strings"
 )
 
-type set = map[interface{}]bool
+// set represents a finite collection of elements.
+type set = map[any]bool
 
+// Powerset is a lattice constructed from a given set.
 type Powerset struct {
 	lattice
 	bot *Set
@@ -15,6 +17,8 @@ type Powerset struct {
 	dom set
 }
 
+// Powerset constructs a powerset lattice from a given set of values.
+// The set members may have heterogeneous types.
 func (latticeFactory) Powerset(dom set) *Powerset {
 	p := new(Powerset)
 	p.dom = make(set)
@@ -25,7 +29,9 @@ func (latticeFactory) Powerset(dom set) *Powerset {
 	return p
 }
 
-func (latticeFactory) PowersetVariadic(dom ...interface{}) *Powerset {
+// PowersetVaradiac is a variadic variant of the Powerset lattice factory method.
+// The constructed powerset lattice will contain all elements given to dom.
+func (latticeFactory) PowersetVariadic(dom ...any) *Powerset {
 	p := new(Powerset)
 	p.dom = make(set)
 	for _, x := range dom {
@@ -39,6 +45,7 @@ func (p *Powerset) Powerset() *Powerset {
 	return p
 }
 
+// Top returns the ⊤ element for the powerset lattice, containing all elements in the set.
 func (p *Powerset) Top() Element {
 	if p.top == nil {
 		p.top = new(Set)
@@ -48,6 +55,7 @@ func (p *Powerset) Top() Element {
 	return *p.top
 }
 
+// Bot returns the ⊥ element for the powerset lattice, the empty set.
 func (p *Powerset) Bot() Element {
 	if p.bot == nil {
 		p.bot = new(Set)
@@ -57,6 +65,7 @@ func (p *Powerset) Bot() Element {
 	return *p.bot
 }
 
+// Eq checks whether another lattice is equal to the subject powerset lattice.
 func (l1 *Powerset) Eq(l2 Lattice) bool {
 	// First try to get away with referential equality
 	if l1 == l2 {
@@ -99,15 +108,13 @@ func (p *Powerset) String() string {
 	return colorize.Lattice("℘") + "({" + strings.Join(strs, ", ") + "})"
 }
 
+// Domain retrieves all the elements of the set from which the powerset is derived.s
 func (p *Powerset) Domain() set {
 	return p.dom
 }
 
-func (p *Powerset) Contains(x interface{}) bool {
+// Contains checks whether an element belongs to the set from which a powerset is derived.
+func (p *Powerset) Contains(x any) bool {
 	_, ok := p.dom[x]
 	return ok
-}
-
-func (p *Powerset) Extend(x interface{}) {
-	p.dom[x] = true
 }

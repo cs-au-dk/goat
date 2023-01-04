@@ -6,6 +6,7 @@ import (
 	"log"
 	"strings"
 
+	"github.com/cs-au-dk/goat/analysis/absint/ops"
 	"github.com/cs-au-dk/goat/analysis/cfg"
 	"github.com/cs-au-dk/goat/analysis/defs"
 	L "github.com/cs-au-dk/goat/analysis/lattice"
@@ -16,21 +17,24 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
+// Blacklisted checks whether a call instruction/callee pair is blacklisted, and should be skipped.
 func (C AnalysisCtxt) Blacklisted(callIns ssa.CallInstruction, sfun *ssa.Function) bool {
-	// Spoof the call if it is has no ssa instructions (external)
+	// Spoof the call if it is has no SSA instructions.
+	// This typically occurs for external functions.
 	if len(sfun.Blocks) == 0 {
 		return true
 	}
 
-	// Functions in the testing package perform a lot of locking that we do not
-	// want to analyze.
+	// Skip functions in the testing package, as they perform
+	// a lot of locking that we do not want to analyze.
 	if pkg := sfun.Pkg; pkg != nil && pkg.Pkg.Name() == "testing" {
 		// || pkgName == "net"
 		return true
 	}
 
-	// Since we use special abstract values for mutexes and conds, we cannot
-	// abstractly interpret the bodies of methods on those types.
+	// Skip analyzing the function bodies of standard library concurrency primitives.
+	// We use special abstract values for them, so we cannot abstractly interpret the bodies
+	// of their methods on those types.
 	if recv := sfun.Signature.Recv(); recv != nil && !opts.SkipSync() &&
 		utils.IsModelledConcurrentAPIType(recv.Type()) {
 		return true
@@ -40,6 +44,11 @@ func (C AnalysisCtxt) Blacklisted(callIns ssa.CallInstruction, sfun *ssa.Functio
 	return !C.FragmentPredicate(callIns, sfun)
 }
 
+// TopInjectParams takes a call instruction, abstract state, and set of blacklisted functions,
+// and produces the abstract memory approximating the state after the call returns.
+// The memory is updated, such that all heap locations transitively reachable through the parameter's
+// values that may have potential side effects are updated to the corresponding ⊤ values for
+// their types.
 func (C AnalysisCtxt) TopInjectParams(
 	callIns ssa.CallInstruction,
 	g defs.Goro,
@@ -51,7 +60,11 @@ func (C AnalysisCtxt) TopInjectParams(
 	mops := L.MemOps(state.Memory())
 	visited := map[loc.Location]bool{}
 
+	// Extract results of the side-effect analysis.
 	sideffects := C.LoadRes.WrittenFields
+
+	// Combine side-effect information analysis into a single
+	// `affected-by-side-effects` function.
 	mapEffects := sideffects.MapCombinedInfo(blacklists)
 	sliceEffects := sideffects.SliceCombinedInfo(blacklists)
 	pointerEffects := sideffects.PointerCombinedInfo(blacklists)
@@ -76,8 +89,15 @@ func (C AnalysisCtxt) TopInjectParams(
 						return
 					}
 
+					if _, isItf := l.Type().Underlying().(*T.Interface); isItf {
+						// Values inside interfaces cannot be manipulated, like closures
+						return
+					}
+
+					aL := ops.GetAllocationSiteLocation(l)
+
 					updated := false
-					if site, found := l.GetSite(); found {
+					if site, found := aL.GetSite(); found {
 						switch {
 						case C.FocusedPrimitives != nil && C.IsPrimitiveFocused(site):
 							// NOTE (Unsound): Skip focused primitives when injecting top
@@ -96,8 +116,11 @@ func (C AnalysisCtxt) TopInjectParams(
 					}
 
 					// Update unknown structs
+					// FIXME: This code does not handle pointers to embedded structs correctly.
+					//  The written fields analysis currently only says something about which
+					//  fields are written to on the outer struct.
 					if av.IsKnownStruct() {
-						// If the site is not a pointer to a struct, proceed normally
+						// If the site is not a pointer, proceed normally
 						if ptT, ok := l.Type().Underlying().(*T.Pointer); ok {
 							// If the site is not a pointer to a struct, proceed normally
 							if structT, ok := ptT.Elem().Underlying().(*T.Struct); ok {
@@ -133,21 +156,21 @@ func (C AnalysisCtxt) TopInjectParams(
 		case v.IsChan():
 			rec(v.ChanValue().Payload())
 		case v.IsCond() && v.CondValue().IsLockerKnown():
-			v.CondValue().KnownLockers().FilterNil().ForEach(func(l loc.Location) {
-				TOP := mops.GetUnsafe(l).ToTop()
-				mops.Update(l, TOP)
-			})
+			rec(Elements().AbstractPointerV().UpdatePointer(v.CondValue().KnownLockers()))
 		}
 	}
 
 	for _, arg := range callIns.Common().Args {
-		rec(evaluateSSA(g, mops.Memory(), arg))
+		rec(EvaluateSSA(g, mops.Memory(), arg))
 	}
 
 	return mops.Memory()
 }
 
+// callSuccs retrieves all the possible successors of a call instruction,
+// and the associated abstract states.
 func (C AnalysisCtxt) callSuccs(
+	sl defs.Superloc,
 	g defs.Goro,
 	cl defs.CtrLoc,
 	state L.AnalysisState) L.AnalysisIntraprocess {
@@ -185,7 +208,7 @@ func (C AnalysisCtxt) callSuccs(
 		}
 	}
 
-	paramTransfers, mayPanic := C.transferParams(*callIns.Common(), g, g, state.Memory())
+	paramTransfers, mayPanic := C.transferParams(sl, *callIns.Common(), g, g, state.Memory())
 
 	if mayPanic {
 		succs = succs.Update(cl.Panic(), state)
@@ -228,7 +251,7 @@ func (C AnalysisCtxt) callSuccs(
 		}
 
 		// If we have a "model" for the called function, use that.
-		if nsuccs, hasModel := C.stdCall(g, cl, callIns, state, sfun); hasModel {
+		if nsuccs, hasModel := C.stdCall(sl, g, cl, callIns, state, sfun); hasModel {
 			succs = succs.MonoJoin(nsuccs)
 		} else if C.Blacklisted(callIns, sfun) {
 			blacklists[sfun] = struct{}{}
@@ -278,6 +301,7 @@ func (C AnalysisCtxt) callSuccs(
 // caller into the memory of the callee.
 // Uses points-to values to determine the possible called functions.
 func (C AnalysisCtxt) transferParams(
+	sl defs.Superloc,
 	call ssa.CallCommon,
 	fromG, toG defs.Goro,
 	initMem L.Memory,
@@ -295,7 +319,7 @@ func (C AnalysisCtxt) transferParams(
 			if _, ok := arg.(*ssa.Const); !ok {
 				newMem = newMem.Update(
 					loc.LocationFromSSAValue(toG, arg),
-					evaluateSSA(fromG, initMem, arg),
+					EvaluateSSA(fromG, initMem, arg),
 				)
 			}
 		}
@@ -308,7 +332,7 @@ func (C AnalysisCtxt) transferParams(
 	// Pre-evaluate arguments
 	var aArgs []L.AbstractValue
 	for _, ssaVal := range call.Args {
-		aArgs = append(aArgs, evaluateSSA(fromG, initMem, ssaVal))
+		aArgs = append(aArgs, EvaluateSSA(fromG, initMem, ssaVal))
 	}
 
 	type callTarget struct {
@@ -316,7 +340,7 @@ func (C AnalysisCtxt) transferParams(
 		args    []L.AbstractValue
 	}
 
-	v, mem := C.swapWildcard(fromG, initMem, call.Value)
+	v, mem := C.swapWildcard(sl, fromG, initMem, call.Value)
 	initMem = mem
 	bases := v.PointerValue().FilterNilCB(func() { mayPanic = true })
 	C.CheckPointsTo(bases)
@@ -383,7 +407,7 @@ func (C AnalysisCtxt) transferParams(
 	if len(targets) == 0 && !mayPanic {
 		panic(fmt.Errorf("no targets computed for call: %s with recv/value %s",
 			call.String(),
-			evaluateSSA(fromG, initMem, call.Value)))
+			EvaluateSSA(fromG, initMem, call.Value)))
 	}
 
 	for fun, target := range targets {

@@ -17,6 +17,8 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
+// labelsToLocs computes a set of locations from labels produced by the points-to analysis.
+// The strategy for constructing locations is given by "mkLoc".
 func labelsToLocs(pt pointer.Pointer, mkLoc func(*pointer.Label) loc.Location) []loc.Location {
 	locMap := make(map[loc.Location]struct{})
 	for _, l := range pt.PointsTo().Labels() {
@@ -34,13 +36,20 @@ func labelsToLocs(pt pointer.Pointer, mkLoc func(*pointer.Label) loc.Location) [
 	return locs
 }
 
+// labelsToAlloc computes a set of allocation sites, or allocation site access paths
+// from labels produced by the points-to analysis.
 func labelsToAllocs(pt pointer.Pointer) []loc.Location {
 	return labelsToLocs(pt, func(l *pointer.Label) loc.Location {
+		// Get root value and access path.
 		v, accesses := u.SplitLabel(l)
 		var ptr loc.Location
 		if global, ok := v.(*ssa.Global); ok {
+			// If the root value is a global variable, set the root allocation site
+			// as a global location.
 			ptr = loc.GlobalLocation{Site: global}
 		} else {
+			// If the root value is a local allocation site, create it
+			// and assign it as belonging to the unknown goroutine.
 			ptr = loc.AllocationSiteLocation{
 				Goro:    defs.Create().TopGoro(),
 				Site:    v,
@@ -48,62 +57,64 @@ func labelsToAllocs(pt pointer.Pointer) []loc.Location {
 			}
 		}
 
-		if len(accesses) > 0 {
-			var typ T.Type
-			switch bTyp := v.Type().Underlying().(type) {
-			case *T.Slice:
-				// Slices are a bit weird in that their allocation sites do not
-				// have *T.Pointer type.
-				if _, ok := accesses[0].(u.ArrayAccess); !ok {
-					log.Fatalln("???", accesses)
-				}
+		if len(accesses) == 0 {
+			// If no access path is present, return the constructed allocation site directly.
+			return ptr
+		}
 
-				accesses = accesses[1:]
-				typ = bTyp.Elem()
-				ptr = loc.FieldLocation{
-					Base:  ptr,
-					Index: -2,
-				}
-
-			case *T.Pointer:
-				typ = bTyp.Elem()
-
-			default:
-				log.Fatalf("Allocation site has unexpected type %T %v", bTyp, bTyp)
+		// Keep track of the type as the location is constructed. This is required for infering the type of
+		//
+		var typ T.Type
+		switch bTyp := v.Type().Underlying().(type) {
+		case *T.Slice:
+			// Slice allocation sites do not have *T.Pointer type.
+			if _, ok := accesses[0].(u.ArrayAccess); !ok {
+				log.Fatalf("Access path encodes non-array access action %v for slice value %v", accesses, v)
 			}
 
-			for _, access := range accesses {
-				switch access := access.(type) {
-				case u.FieldAccess:
-					fieldName := access.Field
+			// Use up access path.
+			accesses = accesses[1:]
+			// Get type of underlying element
+			typ = bTyp.Elem()
+			// Build heap location as an array location.
+			ptr = loc.NewArrayElementLocation(ptr)
 
-					structT := typ.Underlying().(*T.Struct)
-					found := false
-					for i := 0; i < structT.NumFields(); i++ {
-						if field := structT.Field(i); field.Name() == fieldName {
+		case *T.Pointer:
+			typ = bTyp.Elem()
 
-							typ = field.Type()
-							ptr = loc.FieldLocation{
-								Base:  ptr,
-								Index: i,
-							}
+		default:
+			log.Fatalf("Allocation site has unexpected type %T %v", bTyp, bTyp)
+		}
 
-							found = true
-							break
+		// For each remaining access path, incrementally construct the location.
+		for _, access := range accesses {
+			switch access := access.(type) {
+			case u.FieldAccess:
+				fieldName := access.Field
+
+				structT := typ.Underlying().(*T.Struct)
+				found := false
+				for i := 0; i < structT.NumFields(); i++ {
+					if field := structT.Field(i); field.Name() == fieldName {
+
+						typ = field.Type()
+						ptr = loc.FieldLocation{
+							Base:  ptr,
+							Index: i,
 						}
-					}
 
-					if !found {
-						fmt.Println(v.Type(), l.Path())
-						log.Fatalf("None of %v's fields has name: %s", structT, fieldName)
-					}
-				case u.ArrayAccess:
-					typ = typ.Underlying().(*T.Array).Elem()
-					ptr = loc.FieldLocation{
-						Base:  ptr,
-						Index: -2,
+						found = true
+						break
 					}
 				}
+
+				if !found {
+					fmt.Println(v.Type(), l.Path())
+					log.Fatalf("None of %v's fields has name: %s", structT, fieldName)
+				}
+			case u.ArrayAccess:
+				typ = typ.Underlying().(*T.Array).Elem()
+				ptr = loc.NewArrayElementLocation(ptr)
 			}
 		}
 
@@ -111,16 +122,9 @@ func labelsToAllocs(pt pointer.Pointer) []loc.Location {
 	})
 }
 
-func labelsToFuncs(pt pointer.Pointer) []loc.Location {
-	return labelsToLocs(pt, func(l *pointer.Label) loc.Location {
-		if l.Path() != "" {
-			log.Fatalln("Non-empty path for label to be turned into function pointer:", l)
-		}
-		return loc.FunctionPointer{Fun: l.Value().(*ssa.Function)}
-	})
-}
-
+// allocTopValue creates a top value for the given type.
 func allocTopValue(t T.Type) L.AbstractValue {
+	// Check whether to create top values for standard library primitive types.
 	switch {
 	case utils.IsNamedType(t, "sync", "Mutex"):
 		return L.Elements().AbstractMutex().ToTop()
@@ -128,6 +132,8 @@ func allocTopValue(t T.Type) L.AbstractValue {
 		return L.Elements().AbstractRWMutex().ToTop()
 	case utils.IsNamedType(t, "sync", "Cond"):
 		return L.Elements().AbstractCond().ToTop()
+	case utils.IsNamedType(t, "sync", "WaitGroup"):
+		return L.Elements().AbstractWaitGroup().ToTop()
 	}
 
 	switch t := t.Underlying().(type) {
@@ -162,51 +168,98 @@ func allocTopValue(t T.Type) L.AbstractValue {
 	}
 }
 
-func getAllocationSiteLocation(l loc.Location) loc.AddressableLocation {
+// GetAllocationSiteLocation returns the allocation site of an arbitrary location value.
+// For global and allocation sites, it acts as the identity function. Field locations
+// are recursively traversed until the base is an addressable location. Any other location
+// types will lead to panic.
+func GetAllocationSiteLocation(l loc.Location) loc.AddressableLocation {
 	switch l := l.(type) {
 	case loc.GlobalLocation:
 		return l
 	case loc.AllocationSiteLocation:
 		return l
 	case loc.FieldLocation:
-		return getAllocationSiteLocation(l.Base)
-	case loc.IndexLocation:
-		return getAllocationSiteLocation(l.Base)
+		return GetAllocationSiteLocation(l.Base)
 	default:
-		panic(fmt.Errorf("Cannot retrieve allocation site location from %v", l))
+		panic(fmt.Errorf("Cannot retrieve allocation site location from %v (%T)", l, l))
 	}
 }
 
-// Caches points-to set trees for ssa values so they can quickly be checked for
-// equality during the analysis. Before we created a different equivalent tree
-// every time the same ssa value was wildcard-swapped.
-// Yields a 30-40% speed-up according to (small) experiments.
-var swapCache struct {
-	pt    *pointer.Result
-	cache map[ssa.Value]L.PointsTo
+// swapBase replaces the base for an arbitrary location with another allocation site.
+// For non-field locations, it returns the new allocation site. For field locations,
+// it recursively reconstructs the field location structure with the new allocation site
+// as the base.
+func swapBase(l loc.Location, newBase loc.AllocationSiteLocation) loc.Location {
+	switch l := l.(type) {
+	case loc.AllocationSiteLocation:
+		return newBase
+	case loc.FieldLocation:
+		l.Base = swapBase(l.Base, newBase)
+		return l
+	default:
+		panic(fmt.Errorf("Cannot swap base on %v (%T)", l, l))
+	}
 }
 
-// Swap a wildcard value with the result of the upfront analysis.
-// Produces a memory where the value has been updated.
-func SwapWildcard(pt *pointer.Result, mem L.Memory, l loc.AddressableLocation) L.Memory {
-	// Check if swapCache needs to be invalidated
+// swapCache memoizes points-to set trees for SSA values so they can quickly be checked for
+// equality during the analysis. This avoids creating different but equivalent trees
+// every time the same SSA value was wildcard-swapped.
+//
+// Yields a 30-40% speed-up according to (small) experiments.
+var swapCache struct {
+	pt    *u.PointerResult
+	cache map[pointer.Pointer]L.PointsTo
+}
+
+// UnwrapWildcard returns the points-to set for the location pointed to by `l` based on the
+// result of the upfront analysis. The returned memory contains ⊤-valued bindings for the
+// necessary locations such that the returned pointers do not go "out-of-bounds".
+func UnwrapWildcard(
+	pt *u.PointerResult,
+	mem L.Memory,
+	l loc.Location,
+	knownFocusedPrimitives map[ssa.Value]L.PointsTo,
+) (L.AbstractValue, L.Memory) {
+	// swapCache must be invalidated and reset whenever the points-to context changes.
 	if pt != swapCache.pt {
 		swapCache.pt = pt
-		swapCache.cache = map[ssa.Value]L.PointsTo{}
+		swapCache.cache = map[pointer.Pointer]L.PointsTo{}
 	}
 
 	fset := pt.CallGraph.Root.Func.Prog.Fset
+	ssaSite, _ := l.GetSite()
+	lTyp := l.Type()
 
-	ssaVal, _ := l.GetSite()
-	ptl, found := swapCache.cache[ssaVal]
+	var preanalysisPointer pointer.Pointer
+	switch l := l.(type) {
+	case loc.FieldLocation:
+		// Allow swapping of Locker field on Cond objects via CondQueries.
+		if bt, ok := l.Base.Type().(*T.Pointer); ok &&
+			utils.IsNamedTypeStrict(bt.Elem(), "sync", "Cond") &&
+			bt.Elem().Underlying().(*T.Struct).Field(l.Index).Name() == "L" {
+			var hasSite bool
+			ssaSite, hasSite = l.Base.GetSite()
+			if !hasSite {
+				log.Panicf("Cond Locker field pointer to embedded Cond was not found? %v", l)
+			}
+			preanalysisPointer = *pt.CondQueries[ssaSite]
+		}
+	case loc.AddressableLocation:
+		preanalysisPointer = pt.Queries[ssaSite]
+	default:
+		panic(fmt.Errorf("Unsupported wilcard swap of %v", l))
+	}
+
+	ptl, found := swapCache.cache[preanalysisPointer]
 	if !found {
 		// Get all aliases of the given pointer as top allocation sites
-		locs := labelsToAllocs(pt.Queries[ssaVal])
+		locs := labelsToAllocs(preanalysisPointer)
 		// Construct a points-to set including the nil location and all the top
 		// allocation sites.
+		ol := l
 		ptl = L.Create().Element().PointsTo(locs...).Filter(func(l loc.Location) bool {
 			// Get the site of the location
-			site, ok := getAllocationSiteLocation(l).GetSite()
+			site, ok := GetAllocationSiteLocation(l).GetSite()
 			if !ok {
 				log.Fatalln("No site for", l)
 			}
@@ -222,7 +275,7 @@ func SwapWildcard(pt *pointer.Result, mem L.Memory, l loc.AddressableLocation) L
 			// Filter out locations that don't match the type
 			// NOTE: This would suggest that the pointer analysis is buggy?
 			// 	Maybe it shouldn't fail silently?
-			typesValid := utils.TypeCompat(ssaVal.Type(), l.Type())
+			typesValid := utils.TypeCompat(lTyp, l.Type())
 			if utils.Opts().Verbose() && ok && !typesValid {
 				log.Println("Source site:", color.GreenString(site.Name()+" = "+site.String()))
 				log.Println("Source site type: " +
@@ -248,40 +301,58 @@ func SwapWildcard(pt *pointer.Result, mem L.Memory, l loc.AddressableLocation) L
 					log.Println("Parent is nil: " + color.GreenString("%s ", site.Parent()) +
 						color.CyanString("%p", site.Parent()))
 				}
-				log.Println("Target site:", color.RedString(ssaVal.Name()+" = "+ssaVal.String()))
+				log.Println("Target site:", color.RedString(ol.String()))
 				log.Println("Target site type: " +
-					color.RedString("%s ", ssaVal.Type()) +
-					color.CyanString("%p", ssaVal.Type()))
+					color.RedString("%s ", lTyp) +
+					color.CyanString("%p", lTyp))
 				log.Println("Target site underlying type: " +
-					color.RedString("%s ", ssaVal.Type().Underlying()) +
-					color.CyanString("%p", ssaVal.Type().Underlying()))
-				if ssaVal.Parent() != nil {
-					if ssaVal.Parent().Pkg != nil {
-						if ssaVal.Parent().Pkg.Pkg != nil {
-							log.Println("Package: " + color.RedString("%s ", ssaVal.Parent().Pkg.Pkg) +
-								color.CyanString("%p", ssaVal.Parent().Pkg.Pkg))
+					color.RedString("%s ", lTyp.Underlying()) +
+					color.CyanString("%p", lTyp.Underlying()))
+				/*
+					if ssaVal.Parent() != nil {
+						if ssaVal.Parent().Pkg != nil {
+							if ssaVal.Parent().Pkg.Pkg != nil {
+								log.Println("Package: " + color.RedString("%s ", ssaVal.Parent().Pkg.Pkg) +
+									color.CyanString("%p", ssaVal.Parent().Pkg.Pkg))
+							} else {
+								log.Println("Package of package is nil: " + color.RedString("%s ", ssaVal.Parent().Pkg) +
+									color.CyanString("%p", ssaVal.Parent().Pkg))
+							}
 						} else {
-							log.Println("Package of package is nil: " + color.RedString("%s ", ssaVal.Parent().Pkg) +
-								color.CyanString("%p", ssaVal.Parent().Pkg))
+							log.Println("Package of parent is nil: " + color.RedString("%s ", ssaVal.Parent()) +
+								color.CyanString("%p", ssaVal.Parent()))
 						}
 					} else {
-						log.Println("Package of parent is nil: " + color.RedString("%s ", ssaVal.Parent()) +
+						log.Println("Parent is nil: " + color.RedString("%s ", ssaVal.Parent()) +
 							color.CyanString("%p", ssaVal.Parent()))
 					}
-				} else {
-					log.Println("Parent is nil: " + color.RedString("%s ", ssaVal.Parent()) +
-						color.CyanString("%p", ssaVal.Parent()))
-				}
+				*/
 				fmt.Println()
 			}
 			return typesValid
-		}).Add(loc.NilLocation{})
-		// Nil must be included for soundness
-
-		swapCache.cache[ssaVal] = ptl
+		}).Add(loc.NilLocation{}) // Nil must be included for soundness
+		swapCache.cache[preanalysisPointer] = ptl
 	}
 
-	mem = mem.Update(l, L.Elements().AbstractPointerV().UpdatePointer(ptl))
+	if len(knownFocusedPrimitives) > 0 {
+		// For each known focused primitive, replace the ⊤-owned allocation site
+		// pointer with the set of known possible allocations.
+		ptl.ForEach(func(l loc.Location) {
+			if _, isNil := l.(loc.NilLocation); isNil {
+				return
+			}
+
+			if aloc, ok := GetAllocationSiteLocation(l).(loc.AllocationSiteLocation); ok {
+				if ptsto, found := knownFocusedPrimitives[aloc.Site]; found {
+					swapped := make([]loc.Location, 0, ptsto.Size())
+					ptsto.ForEach(func(nl loc.Location) {
+						swapped = append(swapped, swapBase(l, nl.(loc.AllocationSiteLocation)))
+					})
+					ptl = ptl.Remove(l).MonoJoin(L.Elements().PointsTo(swapped...))
+				}
+			}
+		})
+	}
 
 	allocateOrSet := func(key loc.AddressableLocation, value L.AbstractValue) {
 		if l, isAllocSite := key.(loc.AllocationSiteLocation); isAllocSite {
@@ -293,9 +364,16 @@ func SwapWildcard(pt *pointer.Result, mem L.Memory, l loc.AddressableLocation) L
 
 	// Only perform case analysis on locations which are not nil
 	ptl.FilterNil().ForEach(func(l2_ loc.Location) {
-		// l2 might be a FieldLocation, but we need to allocate a value for the base.
-		l2 := getAllocationSiteLocation(l2_)
+		// l2 might be a FieldLocation, so we might need to allocate a value for the base.
+		l2 := GetAllocationSiteLocation(l2_)
 		site, _ := l2.GetSite()
+
+		// Skip pessimistic over-approximation for known primitives
+		if aloc, ok := l2.(loc.AllocationSiteLocation); ok &&
+			!defs.Create().TopGoro().Equal(aloc.Goro.(defs.Goro)) {
+			return
+		}
+
 		switch t := site.Type().Underlying().(type) {
 		case *T.Pointer:
 			// Update every member of the representative points-to set
@@ -305,16 +383,16 @@ func SwapWildcard(pt *pointer.Result, mem L.Memory, l loc.AddressableLocation) L
 					mops := L.MemOps(mem)
 					v, _ := mops.Get(l)
 					v2, _ := mops.Get(l2)
-					fmt.Println("Original location", l, "has site", ssaVal, "of type", ssaVal.Type())
+					fmt.Println("Original location", l, "has site", ssaSite, "of type", lTyp)
 					fmt.Println("Points to sites: {")
-					locs := labelsToAllocs(pt.Queries[ssaVal])
+					locs := labelsToAllocs(preanalysisPointer)
 					for _, l := range locs {
-						siteVal, _ := getAllocationSiteLocation(l).GetSite()
+						siteVal, _ := GetAllocationSiteLocation(l).GetSite()
 						fmt.Println(l, "of type", siteVal.Type())
 						fmt.Println("Original construct at: ", fset.Position(siteVal.Pos()))
 					}
 					fmt.Println("Indirectly points-to {")
-					for _, l := range pt.IndirectQueries[ssaVal].PointsTo().Labels() {
+					for _, l := range pt.IndirectQueries[ssaSite].PointsTo().Labels() {
 						fmt.Println(l.Value(), "of type", l.Value().Type())
 						fmt.Println("Original construct at: ", fset.Position(l.Value().Pos()))
 					}
@@ -331,9 +409,8 @@ func SwapWildcard(pt *pointer.Result, mem L.Memory, l loc.AddressableLocation) L
 			allocateOrSet(l2, L.TopValueForType(t.Elem()))
 
 		case *T.Interface:
-			// For interface, examine the SSA interface allocation site
-			// (make interface{} <- x) for the type of x to construct a top
-			// value.
+			// For interface, examine the SSA interface allocation site (make interface{} <- x)
+			// for the type of x to construct a top value.
 			s, _ := l2.GetSite()
 			if sItf, ok := s.(*ssa.MakeInterface); ok {
 				// For Locker interfaces, ensure that all possible underlying standard
@@ -345,7 +422,7 @@ func SwapWildcard(pt *pointer.Result, mem L.Memory, l loc.AddressableLocation) L
 					// (they always use a pointer receiver)
 					locs := labelsToAllocs(pt.Queries[sItf.X])
 					for _, l_ := range locs {
-						l := getAllocationSiteLocation(l_)
+						l := GetAllocationSiteLocation(l_)
 						site, _ := l.GetSite()
 						allocT := site.Type().Underlying().(*T.Pointer).Elem()
 						allocateOrSet(l, L.TopValueForType(allocT))
@@ -386,7 +463,8 @@ func SwapWildcard(pt *pointer.Result, mem L.Memory, l loc.AddressableLocation) L
 			allocateOrSet(l2, allocTopValue(t))
 		}
 	})
-	return mem
+
+	return L.Elements().AbstractPointerV().UpdatePointer(ptl), mem
 }
 
 // Kept for further notice

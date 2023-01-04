@@ -52,8 +52,7 @@ func (op *ChannelOp) String() (opStr string) {
 	return
 }
 
-// BufferLabel formats the buffer size to
-// a string.
+// BufferLabel formats the buffer size to a string.
 func (op *ChannelOp) BufferLabel() string {
 	if opts.Extended() {
 		switch buf := op.Buffer.(type) {

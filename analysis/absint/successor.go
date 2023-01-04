@@ -7,18 +7,19 @@ import (
 	"github.com/cs-au-dk/goat/utils"
 )
 
-// Basic successor implementation for any configuration. Successors at
-// different abstraction levels should embed it. Includes
-// a description of the transition, and the succeeding configuration.
+// Successor pairs an abstract configuration denoting the successor
+// with a labeled edge, where the label is denoted by the transition.
 type Successor struct {
 	configuration *AbsConfiguration
 	transition    T.Transition
 }
 
+// Configuration extracts the abstract configuration from a successor relation.
 func (succ Successor) Configuration() *AbsConfiguration {
 	return succ.configuration
 }
 
+// Transition extracts the transition from a successor relation.
 func (succ Successor) Transition() T.Transition {
 	return succ.transition
 }
@@ -35,6 +36,8 @@ func (succ Successor) String() string {
 		succ.configuration.String()
 }
 
+// Hash computes a 32-bit hash for a given successor by combining
+// the hashes of the underlying configuration and the transition.
 func (succ Successor) Hash() uint32 {
 	return utils.HashCombine(
 		succ.configuration.Hash(),
@@ -42,6 +45,9 @@ func (succ Successor) Hash() uint32 {
 	)
 }
 
+// DeriveConf derives another successor from the current successor, overridden
+// with the given configuration. The derived successor inherits the transition
+// label from the current successor.
 func (succ Successor) DeriveConf(c *AbsConfiguration) Successor {
 	return Successor{c, succ.transition}
 }

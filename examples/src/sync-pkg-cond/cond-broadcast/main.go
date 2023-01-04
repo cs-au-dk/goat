@@ -10,19 +10,19 @@ func main() {
 	c := sync.NewCond(&sync.Mutex{})
 
 	go func() {
-		c.L.Lock()
-		c.Wait()
+		c.L.Lock() //@ releases
+		c.Wait() //@ blocks
 		c.L.Unlock()
 	}()
 	go func() {
-		c.L.Lock()
+		c.L.Lock() //@ releases
 		chr, _ := bufio.NewReader(os.Stdin).ReadByte()
 		switch chr {
 		case 'a':
-			c.Wait()
+			c.Wait() //@ blocks
 			c.L.Unlock()
 		default:
-			c.Wait()
+			c.Wait() //@ blocks
 			c.L.Unlock()
 		}
 	}()

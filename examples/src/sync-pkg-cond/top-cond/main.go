@@ -6,8 +6,8 @@ func f(c *sync.Cond) {
 	go func() {
 		c.Signal()
 	}()
-	c.L.Lock()
-	c.Wait()
+	c.L.Lock() //@ releases
+	c.Wait() //@ blocks
 	c.L.Unlock()
 }
 

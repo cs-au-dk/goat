@@ -7,37 +7,41 @@ import (
 	"strings"
 )
 
+// options contains all the configurable flags that can be passed from the CLI.
 type options struct {
-	goroBound       uint
-	minlen          uint
-	pseti           int
-	nodesep         float64
-	function        string
-	outputFormat    string
-	gopath          string
-	modulePath      string
-	psets           string
-	task            string
-	logai           bool
-	metrics         bool
-	noColorize      bool
-	httpDebug       bool
-	verbose         bool
-	extended        bool
-	packageSplit    bool
-	includeInternal bool
-	includeTests    bool
-	localPackages   bool
-	visualize       bool
-	fullCg          bool
-	justGoros       bool
-	skipChanNames   bool
-	skipSync        bool
-	noAbort         bool
+	goroBound             uint
+	minlen                uint
+	pseti                 int
+	nodesep               float64
+	function              string
+	outputFormat          string
+	gopath                string
+	modulePath            string
+	psets                 string
+	task                  string
+	logai                 bool
+	metrics               bool
+	noColorize            bool
+	httpDebug             bool
+	httpVisualize         bool
+	verbose               bool
+	extended              bool
+	packageSplit          bool
+	includeInternal       bool
+	includeTests          bool
+	localPackages         bool
+	visualize             bool
+	fullCg                bool
+	justGoros             bool
+	skipChanNames         bool
+	skipSync              bool
+	noAbort               bool
+	optimisticFocusedSwap bool
 }
 
+// Enumeration of possible Goat tasks.
 const (
-	_STATIC_METRICS = iota
+	_STATIC_METRICS = iota + 1
 	_CAN_BUILD
 	_GORO_TOPOLOGY
 	_CYCLES
@@ -53,83 +57,80 @@ const (
 	_CHECK_PSETS
 )
 
+var task = []struct{ flag, explanation string }{
+	_STATIC_METRICS: {
+		"static-metrics",
+		"Uses the upfront analysis to statically collect metrics on over-approximations, e. g. channel points-to set",
+	}, {
+		"check-can-build",
+		"Performs a mock building of the package, attempting pointer analysis and SSA construction",
+	}, {
+		"goroutine-topology",
+		"Construct the goroutine topology graph",
+	}, {
+		"check-cycles",
+		"Check for cycles on the goroutine topology graph",
+	}, {
+		"check-channel-aliasing",
+		"Check the size of the points-to set for each channel and report the maximum",
+	}, {
+		"cfg-to-dot",
+		"Create a graph for the control-flow graph",
+	}, {
+		"callgraph-to-dot",
+		"Create a graph for the call graph",
+	}, {
+		"abstract-interp",
+		"Perform abstract interpretation",
+	}, {
+		"analyze",
+		"Perform semi-dynamic analysis",
+	}, {
+		"points-to",
+		"Perform points-to analysis and log all points-to sets",
+	}, {
+		"positions",
+		"Print all SSA functions found, and the position of each instruction",
+	}, {
+		"written-fields",
+		"Print the result of running the upfront written fields analysis",
+	}, {
+		"collect-primitives",
+		"Print the result of collecting all primitives in all the functions",
+	}, {
+		"check-psets",
+		"Print the result of computing Psets",
+	}}
+
+// Enumeration of possible concurrency primitive sets.
 const (
-	_PSET_SINGLETON = iota
+	_PSET_SINGLETON = iota + 1
 	_PSET_GCATCH
 	_PSET_INTRA_DEP
 	_PSET_TOTAL
 	_PSET_SAMEFUNC
+	_PSET_SCCS
 )
 
-func CanColorize(col func(...interface{}) string) func(...interface{}) string {
-	if opts.noColorize {
-		return func(is ...interface{}) string {
-			return fmt.Sprintf(strings.Repeat("%s", len(is)), is...)
-		}
-	}
-	return col
-}
-
-var task = []struct{ flag, explanation string }{{
-	"static-metrics",
-	"Uses the upfront analysis to statically collect metrics on over-approximations, e. g. channel points-to set",
-}, {
-	"check-can-build",
-	"Performs a mock building of the package, attempting pointer analysis and SSA construction",
-}, {
-	"goroutine-topology",
-	"Construct the goroutine topology graph",
-}, {
-	"check-cycles",
-	"Check for cycles on the goroutine topology graph",
-}, {
-	"check-channel-aliasing",
-	"Check the size of the points-to set for each channel and report the maximum",
-}, {
-	"cfg-to-dot",
-	"Create a graph for the control-flow graph",
-}, {
-	"callgraph-to-dot",
-	"Create a graph for the call graph",
-}, {
-	"abstract-interp",
-	"Perform abstract interpretation",
-}, {
-	"analyze",
-	"Perform semi-dynamic analysis",
-}, {
-	"points-to",
-	"Perform points-to analysis and log all points-to sets",
-}, {
-	"positions",
-	"Print all SSA functions found, and the position of each instruction",
-}, {
-	"written-fields",
-	"Print the result of running the upfront written fields analysis",
-}, {
-	"collect-primitives",
-	"Print the result of collecting all primitives in all the functions",
-}, {
-	"check-psets",
-	"Print the result of computing Psets",
-}}
-
-var psets = []struct{ flag, explanation string }{{
-	"singleton",
-	"Primitive sets consist of singletons of channels, identified by allocation site",
-}, {
-	"gcatch",
-	"Primitive sets are GCatch-style P-sets, (channels with intra-procedural mutual dependencies)",
-}, {
-	"intra-dependent",
-	"Primitive sets are formed from channels of which the operations have intra-procedural control flow dependencies",
-}, {
-	"total",
-	"Construct a single large P-set including all channels",
-}, {
-	"samefunc",
-	"Primitive sets are formed by merging primitives that are allocated or used in the same function",
-}}
+var psets = []struct{ flag, explanation string }{
+	_PSET_SINGLETON: {"singleton",
+		"Primitive sets consist of singletons of channels, identified by allocation site",
+	}, {
+		"gcatch",
+		"Primitive sets are GCatch-style P-sets, (channels with intra-procedural mutual dependencies)",
+	}, {
+		"intra-dependent",
+		"Primitive sets are formed from channels of which the operations have intra-procedural control flow dependencies",
+	}, {
+		"total",
+		"Construct a single large P-set including all channels",
+	}, {
+		"samefunc",
+		"Primitive sets are formed by merging primitives that are allocated or used in the same function",
+	}, {
+		"sccs",
+		"Primitive sets include channels that have inter-procedural mutual dependencies",
+	}}
 
 var opts = &options{}
 
@@ -155,6 +156,7 @@ func (optInterface) PSetIndex() int {
 	return opts.pseti
 }
 
+// IsPickedPset checks whether a computed Pset was chosen by index.
 func (optInterface) IsPickedPset(i int) bool {
 	return opts.pseti == -1 || opts.pseti == i
 }
@@ -205,6 +207,9 @@ func (psetInterface) Total() bool {
 }
 func (psetInterface) SameFunc() bool {
 	return opts.psets == psets[_PSET_SAMEFUNC].flag
+}
+func (psetInterface) SCCS() bool {
+	return opts.psets == psets[_PSET_SCCS].flag
 }
 func (optInterface) Task() taskInterface {
 	return taskInterface{}
@@ -275,6 +280,9 @@ func (optInterface) IncludeTests() bool {
 func (optInterface) LocalPackages() bool {
 	return opts.localPackages
 }
+func (optInterface) HttpVisualize() bool {
+	return opts.httpVisualize
+}
 func (optInterface) Visualize() bool {
 	return opts.visualize
 }
@@ -293,15 +301,18 @@ func (optInterface) SkipSync() bool {
 func (optInterface) NoAbort() bool {
 	return opts.noAbort
 }
+func (optInterface) OptimisticFocusedSwap() bool {
+	return opts.optimisticFocusedSwap
+}
 
 func init() {
 	taskFlag := "\n"
-	for _, task := range task {
+	for _, task := range task[1:] {
 		taskFlag += task.flag + " -- " + task.explanation + "\n"
 	}
 	taskFlag += "\n"
 	psetFlag := "\n"
-	for _, pset := range psets {
+	for _, pset := range psets[1:] {
 		psetFlag += pset.flag + " -- " + pset.explanation + "\n"
 	}
 	psetFlag += "\n"
@@ -333,11 +344,13 @@ in "module-aware" mode (GO111MODULE=on).`)
 	flag.BoolVar(&(opts.justGoros), "just-goroutines", false, "channels are excluded from the graph.")
 	flag.BoolVar(&(opts.fullCg), "full-cg", false, "disable goroutine transitive closure in callgraph")
 	flag.BoolVar(&(opts.skipChanNames), "skip-chan-names", false, "disable associating channel allocation sites with source code given names in the original AST")
+	flag.BoolVar(&(opts.httpVisualize), "http-visualize", false, "enable interactive visualization")
 	flag.BoolVar(&(opts.visualize), "visualize", false, "enable visualization via XDot")
 	flag.BoolVar(&(opts.skipSync), "skip-sync", false, "skip special modelling of features of the 'sync' library")
 	flag.BoolVar(&(opts.noAbort), "no-abort", false, "disable aborts upon critical precision loss")
-	flag.UintVar(&(opts.goroBound), "goro-bound", 1, "set upper bound for dynamically spawned goroutines")
+	flag.UintVar(&(opts.goroBound), "goro-bound", 1, "set upper bound for spawned goroutines")
 	flag.BoolVar(&(opts.httpDebug), "http-debug", false, "Start an http/pprof server for debugging")
+	flag.BoolVar(&(opts.optimisticFocusedSwap), "opt-focused-swap", true, "optimistically assume that a wildcard swap of a focused primitive can only swap in seen allocations (instead of aborting).")
 
 	// Set up logging
 	log.SetFlags(log.Ltime | log.Lshortfile)
@@ -348,8 +361,9 @@ func ParseArgs() {
 	// See https://stackoverflow.com/questions/60235896/flag-provided-but-not-defined-test-v
 	flag.Parse()
 
-	validTask := false
-	for _, task := range task {
+	//
+	var validTask bool
+	for _, task := range task[1:] {
 		if task.flag == opts.task {
 			validTask = true
 			break
@@ -376,10 +390,13 @@ func ParseArgs() {
 	}
 }
 
+// AnalyzeAllFuncs checks the analysis targets a specific function or all functions in a program.
 func (optInterface) AnalyzeAllFuncs() bool {
 	return opts.function == "."
 }
 
+// IsWholeProgramAnalysis checks whether the analysis performs a whole program analysis.
+// This applies for the abstract interpretation, collect primitives, and cfg-to-dot types.
 func (optInterface) IsWholeProgramAnalysis() bool {
 	return (Opts().Task().IsAbstractInterpretation() ||
 		Opts().Task().IsCollectPrimitives() ||
@@ -395,4 +412,14 @@ func (optInterface) OnVerbose(do func()) {
 	if Opts().Verbose() {
 		do()
 	}
+}
+
+// CanColorize uses the CLI flag to determine whether text should be colorized or not.
+func CanColorize(col func(...interface{}) string) func(...interface{}) string {
+	if opts.noColorize {
+		return func(is ...interface{}) string {
+			return fmt.Sprintf(strings.Repeat("%s", len(is)), is...)
+		}
+	}
+	return col
 }

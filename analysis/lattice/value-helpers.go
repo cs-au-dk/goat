@@ -21,6 +21,7 @@ const (
 	_MUTEX_VALUE
 	_RWMUTEX_VALUE
 	_COND_VALUE
+	_WAITGROUP_VALUE
 	_WILDCARD_VALUE
 	// Untyped abstract value. Only ⊥ and ⊤ are valid untyped values.
 	_UNTYPED
@@ -30,12 +31,14 @@ const (
 // NOTE: Types are not canonicalized, so we may end up computing the value for
 // the same type multiple times. Consider using typeutil.Map which
 // canonicalizes types on insertion.
-var botTypeTable = make(map[T.Type]AbstractValue)
-var topTypeTable = make(map[T.Type]AbstractValue)
+var (
+	botTypeTable = make(map[T.Type]AbstractValue)
+	topTypeTable = make(map[T.Type]AbstractValue)
+)
 
 var nilSet = elFact.AbstractPointerV(loc.NilLocation{})
 
-// Computes the zero abstract value for a given type.
+// ZeroValueForType computes the zero abstract value for a given type.
 // Only provides partial coverage for all given types.
 func ZeroValueForType(t T.Type) (zero AbstractValue) {
 	if zero, ok := botTypeTable[t]; ok {
@@ -55,6 +58,8 @@ func ZeroValueForType(t T.Type) (zero AbstractValue) {
 				zero = nilSet
 			case utils.IsNamedType(t, "sync", "Cond"):
 				zero = elFact.AbstractCond()
+			case utils.IsNamedType(t, "sync", "WaitGroup"):
+				zero = elFact.AbstractWaitGroup()
 			default:
 				zero = ZeroValueForType(t.Underlying())
 			}
@@ -118,7 +123,7 @@ func ZeroValueForType(t T.Type) (zero AbstractValue) {
 	return zero
 }
 
-// Compute the top abstract value for a given type
+// TopValueForType computes the top abstract value for a given type
 func TopValueForType(t T.Type) (top AbstractValue) {
 	if top, ok := topTypeTable[t]; ok {
 		return top
@@ -138,6 +143,11 @@ func TopValueForType(t T.Type) (top AbstractValue) {
 	case utils.IsNamedType(t, "sync", "Cond"):
 		if _, ok := t.Underlying().(*T.Struct); ok {
 			top = Elements().AbstractCond().ToTop()
+			goto DONE
+		}
+	case utils.IsNamedType(t, "sync", "WaitGroup"):
+		if _, ok := t.Underlying().(*T.Struct); ok {
+			top = Elements().AbstractWaitGroup().ToTop()
 			goto DONE
 		}
 	}
@@ -188,7 +198,7 @@ DONE:
 	return top
 }
 
-// Checks whether t1 and t2 are equal. If either t1 or t2 is untyped,
+// typeCheckValues checks whether t1 and t2 are equal. If either t1 or t2 is untyped,
 // then return the other t2 or t1, respectively.
 // If both types are not untyped and not equal, panic with an unsupported
 // type conversion error.
@@ -211,6 +221,7 @@ func typeCheckValues(t1, t2 int) int {
 	}
 }
 
+// typeCheckValuesEqual checks that abstract value types are equal.
 func typeCheckValuesEqual(t1, t2 int) {
 	if t1 != t2 {
 		avTypeError(t1, t2)
@@ -218,28 +229,35 @@ func typeCheckValuesEqual(t1, t2 int) {
 	}
 }
 
+// avTypeError is a specialized type error for binary abstract value operations.
 func avTypeError(t1, t2 int) {
 	fmt.Printf("\nElements are of type:\n%s\n%s\n", valueLattice.Get(t1), valueLattice.Get(t2))
 }
 
-// Configuration structure for creating abstract values
+// AbstractValueConfig is used for configuring the creation of abstract values
 type AbstractValueConfig struct {
-	// Constant value (wrapped in interface)
-	Basic interface{}
+	// Basic is an interface wrapper around constant values
+	Basic any
 	// Reference to location array. The reference
 	// helps distinguish between no PointsTo information
 	// (a nil pointer), and the empty pointer location
 	// (a nil slice stored at PointsTo)
 	PointsTo *[]loc.Location
-	// Struct fields
-	Struct map[interface{}]Element
-	// Abstract value is one of the following.
-	// Mutually eclusive.
-	Channel  bool
-	Mutex    bool
-	RWMutex  bool
-	Cond     bool
+	// Struct fields when generating an abstract struct value
+	Struct map[any]Element
+
+	// Channel may be set to true to create an abstract channel.
+	Channel bool
+	// Mutex may be set to true to create an abstract mutex.
+	Mutex bool
+	// RWMutex may be set to true to create an abstract read-write mutex.
+	RWMutex bool
+	// Cond may be set to true to create an abstract conditional variable.
+	Cond bool
+	// Wildcard may be set to true to create an abstract read-write mutex.
 	Wildcard bool
+	// Wildcard may be set to true to create an abstract waitgroup.
+	WaitGroup bool
 }
 
 func (config AbstractValueConfig) String() string {
@@ -260,6 +278,8 @@ func (config AbstractValueConfig) String() string {
 		strs = append(strs, "Is a channel")
 	case config.Cond:
 		strs = append(strs, "Is Cond")
+	case config.WaitGroup:
+		strs = append(strs, "Is WaitGroup")
 	case config.Wildcard:
 		strs = append(strs, "Is Wildcard")
 	case len(config.Struct) != 0:
@@ -276,7 +296,11 @@ func (config AbstractValueConfig) String() string {
 	return strings.Join(strs, "\n")
 }
 
-func PopulateGlobals(mem Memory, pkgs []*ssa.Package, harnessed bool) Memory {
+// PopulateGlobals creates an abstract memory where the global variables in the program are
+// bound. If the analysis runs on a whole program, global variables are populated with the
+// zero value for their corresponding type. If the analysis runs on a fragment, globals
+// are mapped to the ⊤ value of the corresponding type.
+func PopulateGlobals(mem Memory, pkgs []*ssa.Package, wholeProgram bool) Memory {
 	for _, pkg := range pkgs {
 		for _, member := range pkg.Members {
 			if global, ok := member.(*ssa.Global); ok {
@@ -291,16 +315,18 @@ func PopulateGlobals(mem Memory, pkgs []*ssa.Package, harnessed bool) Memory {
 						}
 					}()
 
-					var v AbstractValue
+					// The global variable's type is wrapped in a pointer.
+					typ := member.Type().(*T.Pointer).Elem()
 
-					// If the function is not harnessed, then interpretation can
+					// If the analysis is whole-program, then interpretation can
 					// start with the zero global state.
-					if !harnessed {
-						v = ZeroValueForType(member.Type().(*T.Pointer).Elem())
+					var v AbstractValue
+					if !wholeProgram {
+						v = ZeroValueForType(typ)
 					} else {
-						// If the function is harnessed, then we have no assumptions
+						// If the analysis is carried out on a fragment, then we have no assumptions
 						// about the global state, and must use its top value instead.
-						v = TopValueForType(member.Type().(*T.Pointer).Elem())
+						v = TopValueForType(typ)
 					}
 					mem = mem.Update(loc.GlobalLocation{Site: global}, v)
 				}()

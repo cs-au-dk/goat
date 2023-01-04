@@ -6,10 +6,12 @@ import (
 	"github.com/benbjohnson/immutable"
 )
 
+// Map is a member of the map lattice with keys belonging to `K`.
 type Map[K any] struct {
 	baseMap[K]
 }
 
+// newMap creates a new map for the given map lattice.
 func newMap[K any](lat Lattice) Map[K] {
 	// Should always be safe
 	mapLat := lat.(*MapLattice[K])
@@ -25,7 +27,10 @@ func newMap[K any](lat Lattice) Map[K] {
 	}
 }
 
-//func (elementFactory) Map(lat Lattice) func(bindings map[interface{}]Element) Map[K] {
+// MakeMap generates a map factory converting a set of bindings to
+// members of the given map lattice.
+//
+// func (elementFactory) Map(lat Lattice) func(bindings map[interface{}]Element) Map[K] {
 func MakeMap[K any](lat Lattice) func(bindings map[any]Element) Map[K] {
 	switch lat := lat.(type) {
 	case *MapLattice[K]:
@@ -103,11 +108,13 @@ func (m MapBase[K]) Size() int {
 }
 */
 
+// Geq computes m ⊒ o. Performs lattice dynamic type checking.
 func (e1 Map[K]) Geq(e2 Element) bool {
 	checkLatticeMatch(e1.Lattice(), e2.Lattice(), "⊒")
 	return e1.geq(e2)
 }
 
+// geq computes m ⊒ o.
 func (e1 Map[K]) geq(e2 Element) (result bool) {
 	switch e2 := e2.(type) {
 	case Map[K]:
@@ -121,11 +128,13 @@ func (e1 Map[K]) geq(e2 Element) (result bool) {
 	}
 }
 
+// Leq computes m ⊑ o. Performs lattice dynamic type checking.
 func (e1 Map[K]) Leq(e2 Element) bool {
 	checkLatticeMatch(e1.Lattice(), e2.Lattice(), "⊑")
 	return e1.leq(e2)
 }
 
+// leq computes m ⊑ o.
 func (e1 Map[K]) leq(e2 Element) (result bool) {
 	switch e2 := e2.(type) {
 	case Map[K]:
@@ -139,11 +148,13 @@ func (e1 Map[K]) leq(e2 Element) (result bool) {
 	}
 }
 
+// Eq computes m = o. Performs lattice dynamic type checking.
 func (e1 Map[K]) Eq(e2 Element) bool {
 	checkLatticeMatch(e1.Lattice(), e2.Lattice(), "=")
 	return e1.eq(e2)
 }
 
+// eq computes m = o.
 func (e1 Map[K]) eq(e2 Element) bool {
 	if e2, ok := e2.(Map[K]); ok {
 		return e1.baseMap.eq(e2.baseMap)
@@ -152,11 +163,13 @@ func (e1 Map[K]) eq(e2 Element) bool {
 	return false
 }
 
+// Join computes m ⊔ o. Performs lattice dynamic type checking.
 func (e1 Map[K]) Join(e2 Element) Element {
 	checkLatticeMatch(e1.Lattice(), e2.Lattice(), "⊔")
 	return e1.join(e2)
 }
 
+// join computes m ⊔ o.
 func (e1 Map[K]) join(e2 Element) Element {
 	switch e2 := e2.(type) {
 	case Map[K]:
@@ -170,16 +183,19 @@ func (e1 Map[K]) join(e2 Element) Element {
 	}
 }
 
+// MonoJoin is a monomorphic variant of m ⊔ o for maps.
 func (e1 Map[K]) MonoJoin(e2 Map[K]) Map[K] {
 	e1.baseMap = e1.baseMap.MonoJoin(e2.baseMap)
 	return e1
 }
 
+// Meet computes m ⊓ o. Performs lattice dynamic type checking.
 func (e1 Map[K]) Meet(e2 Element) Element {
 	checkLatticeMatch(e1.lattice, e2.Lattice(), "⊓")
 	return e1.meet(e2)
 }
 
+// meet computes m ⊓ o.
 func (e1 Map[K]) meet(e2 Element) Element {
 	switch e2 := e2.(type) {
 	case Map[K]:
@@ -193,11 +209,13 @@ func (e1 Map[K]) meet(e2 Element) Element {
 	}
 }
 
+// MonoMeet is a monomorphic variant of m ⊓ o for maps.
 func (e1 Map[K]) MonoMeet(e2 Map[K]) Map[K] {
 	e1.baseMap = e1.baseMap.MonoMeet(e2.baseMap)
 	return e1
 }
 
+// Get retrieves the value bound at the given key.
 func (e Map[K]) Get(x K) Element {
 	mapLat := e.Lattice().(*MapLattice[K])
 	if _, ok := mapLat.dom[x]; !ok {
@@ -206,6 +224,8 @@ func (e Map[K]) Get(x K) Element {
 	return e.GetUnsafe(x)
 }
 
+// Update returns a map with an updated binding for the given key.
+// Performs dynamic lattice type checking.
 func (e1 Map[K]) Update(x K, e2 Element) Map[K] {
 	mapLat := e1.Lattice().(*MapLattice[K])
 	if _, ok := mapLat.dom[x]; !ok {
@@ -217,6 +237,7 @@ func (e1 Map[K]) Update(x K, e2 Element) Map[K] {
 	return e1.update(x, e2)
 }
 
+// update returns a map with an updated binding for the given key.
 func (e1 Map[K]) update(x K, e2 Element) Map[K] {
 	e1.baseMap = e1.baseMap.Update(x, e2)
 	return e1

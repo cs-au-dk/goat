@@ -6,28 +6,31 @@ import (
 	"github.com/cs-au-dk/goat/utils"
 )
 
+// AbstractValueLattice is the lattice of abstract Go values.
 type AbstractValueLattice struct {
 	ProductLattice
 }
 
-// TODO: Consider using lifted/dropped lattices to signify unused parts
+// valueLattice is a singleton instantiation of the abstract value lattice.
 var valueLattice = func() *AbstractValueLattice {
 	prod := *latFact.Product(
-		// Points to set for pointer values.
+		// Points-to set lattice for pointer values.
 		pointsToLattice,
-		// Channel information for channel "allocation sites".
+		// Channel lattice for information about channels stored on the heap.
 		Lift(channelInfoLattice),
 		// Struct abstract value lattice. A map infinite in the domain, "Fields"
-		// (an alias for constants), ranging over a lifted, dropped infiinite map
+		// (an alias for constants), ranging over a lifted, dropped infinite map.
 		Lift(Drop(MakeInfiniteMapLattice[any](nil, "Fields"))),
 		// Constant propagation element for basic values.
 		latFact.ConstantPropagation(),
-		// Mutex information for mutex "allocation sites"
+		// Mutex latex for mutex "allocation sites"
 		mutexLattice,
 		// RWMutex information for RW mutex "allocation sites"
 		rwmutexLattice,
 		// Cond information for Cond "allocation sites"
 		condLattice,
+		// WaitGroup information for WaitGroup "allocation sites"
+		flatIntLattice,
 		// Wildcard component, used for unknown pointer-like values
 		Lift(oneElementLattice),
 	)
@@ -38,14 +41,17 @@ var valueLattice = func() *AbstractValueLattice {
 	return val
 }()
 
+// AbstractValue produces the abstract value lattice.
 func (latticeFactory) AbstractValue() *AbstractValueLattice {
 	return valueLattice
 }
 
+// AbstractValue safely converts the abstract value lattice.
 func (v *AbstractValueLattice) AbstractValue() *AbstractValueLattice {
 	return v
 }
 
+// Top returns the abstract value ⊤, which is untyped.
 func (v *AbstractValueLattice) Top() Element {
 	return AbstractValue{
 		element{v},
@@ -54,6 +60,8 @@ func (v *AbstractValueLattice) Top() Element {
 	}
 }
 
+// Bot returns the abstract value ⊥, which is untyped. The raw
+// ⊥ is only meant to be used as a baseline for computing the least-upper bound.
 func (v *AbstractValueLattice) Bot() Element {
 	return AbstractValue{
 		element{v},
@@ -82,14 +90,18 @@ func (l *AbstractValueLattice) Get(i int) Lattice {
 	return l.ProductLattice.Get(i)
 }
 
+// Product converts to underlying product lattice.
 func (l *AbstractValueLattice) Product() *ProductLattice {
 	return l.ProductLattice.Product()
 }
 
+// Value safely converts to abstract value lattice.
 func (l *AbstractValueLattice) Value() *AbstractValueLattice {
 	return l
 }
 
+// LatticeForType retrieves the correspoding lattice of abstract values
+// corresponding to an arbitrary Go type.
 func (l *AbstractValueLattice) LatticeForType(T types.Type) Lattice {
 	switch T := T.(type) {
 	case *types.Pointer:
@@ -108,6 +120,8 @@ func (l *AbstractValueLattice) LatticeForType(T types.Type) Lattice {
 			return l.Get(_RWMUTEX_VALUE)
 		case utils.IsNamedType(T, "sync", "Cond"):
 			return l.Get(_COND_VALUE)
+		case utils.IsNamedType(T, "sync", "WaitGroup"):
+			return l.Get(_WAITGROUP_VALUE)
 		default:
 			return l.LatticeForType(T.Underlying())
 		}

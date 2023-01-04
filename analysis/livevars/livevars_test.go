@@ -36,7 +36,7 @@ func TestLivevarsPerformance(t *testing.T) {
 
 	ptrinfo := upfront.GetPtsToSets(prog, mains)
 
-	prog_cfg := cfg.GetCFG(prog, mains, ptrinfo)
+	prog_cfg := cfg.GetCFG(prog, mains, &ptrinfo.Result)
 
 	errCh := make(chan interface{}, 1)
 

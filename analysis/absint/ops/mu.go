@@ -4,6 +4,8 @@ import (
 	L "github.com/cs-au-dk/goat/analysis/lattice"
 )
 
+// Lock models locking an abstract mutex value. Leverages the proper semantics for
+// both Mutex and RWMutex.
 func Lock(val L.AbstractValue) L.OpOutcomes {
 	// Constants
 	LOCKED, UNLOCKED := L.Consts().Mutex()
@@ -36,11 +38,14 @@ func Lock(val L.AbstractValue) L.OpOutcomes {
 	return BLOCKS
 }
 
+// Unlock models unlocking an abstract mutex value. Leverages the proper semantics for
+// both Mutex and RWMutex.
 func Unlock(val L.AbstractValue) L.OpOutcomes {
 	// Constants
 	LOCKED, UNLOCKED := L.Consts().Mutex()
 	BLOCKS, SUCCEED, PANICS := L.Consts().OpOutcomes()
 
+	// The neutral outcome is that unlocking blocks.
 	OUTCOME := BLOCKS
 
 	switch {
@@ -56,6 +61,7 @@ func Unlock(val L.AbstractValue) L.OpOutcomes {
 			OUTCOME = OUTCOME.MonoJoin(SUCCEED(val.UpdateMutex(UNLOCKED)))
 		}
 	case val.IsRWMutex():
+		// Constant denoting the absence of read locks.
 		NORLOCKS := L.Elements().FlatInt(0)
 
 		mu := val.RWMutex()
@@ -66,9 +72,8 @@ func Unlock(val L.AbstractValue) L.OpOutcomes {
 				mu.UpdateStatus(UNLOCKED))))
 		}
 		if mu.Status().Geq(LOCKED) {
-			// If the lock may be locked, the outcome may be a successful locking where
+			// If the lock may be locked, the outcome may be a successful unlocking where
 			// it is guaranteed that no read locks are present.
-
 			OUTCOME = OUTCOME.MonoJoin(SUCCEED(val.UpdateRWMutex(
 				mu.UpdateStatus(UNLOCKED).UpdateRLocks(NORLOCKS))))
 		}
@@ -77,6 +82,7 @@ func Unlock(val L.AbstractValue) L.OpOutcomes {
 	return OUTCOME
 }
 
+// RLock models read-locking for abstract RWMutex values.
 func RLock(val L.AbstractValue) L.OpOutcomes {
 	// Consts
 	UNLOCKED := L.Consts().Unlocked()
@@ -90,18 +96,18 @@ func RLock(val L.AbstractValue) L.OpOutcomes {
 
 		switch {
 		case rlocks.IsBot():
-			panic("what?")
+			panic("Unexpected ⊥ RWMutex status.")
 		case rlocks.IsTop():
 			// If the amount of read locks is unknown, the outcome of read locking may
 			// be a successful read lock, where the lock is guaranteed to not be
-			// locked, but the amount of read locks is still unknown.
+			// locked, but the amount of read locks remains unknown.
 			return SUCCEED(val.UpdateRWMutex(
 				mu.UpdateStatus(UNLOCKED),
 			))
 		default:
 			// If the amount of read locks is known, then add 1 to it.
 			// The successful outcome also states that the mutex is definitely not
-			// fully locked.
+			// write-locked.
 			rls := rlocks.FlatInt().IValue()
 
 			return SUCCEED(val.UpdateRWMutex(
@@ -109,12 +115,15 @@ func RLock(val L.AbstractValue) L.OpOutcomes {
 		}
 	}
 
+	// If the RWMutex may not be write-unlocked, read-locking is guaranteed to block.
 	return BLOCKS
 }
 
+// RUnlock models read-unlocking for abstract RWMutex values.
 func RUnlock(val L.AbstractValue) L.OpOutcomes {
 	// Consts
 	LOCKED, UNLOCKED := L.Consts().Mutex()
+	// Outcome factories.
 	BLOCKS, SUCCEED, PANIC := L.Consts().OpOutcomes()
 
 	OUTCOME := BLOCKS
@@ -138,7 +147,7 @@ func RUnlock(val L.AbstractValue) L.OpOutcomes {
 			)).MonoJoin(PANIC(val))
 		default:
 			// If the amount of read locks is known, then the operation is guaranteed
-			// to throw a fatal exception if no read locks are held, or to succeed by
+			// to throw a fatal exception when no read locks are held, or to succeed by
 			// decrementing the amount of read locks. In the latter scenario, the lock
 			// is also guaranteed to be write unlocked.
 			rls := rlocks.FlatInt().IValue()
@@ -146,18 +155,14 @@ func RUnlock(val L.AbstractValue) L.OpOutcomes {
 			case 0:
 				OUTCOME = OUTCOME.MonoJoin(PANIC(val))
 			default:
-				OUTCOME = OUTCOME.MonoJoin(SUCCEED(
-					val.UpdateRWMutex(mu.UpdateStatus(
-						UNLOCKED,
-					).UpdateRLocks(
-						L.Elements().FlatInt(rls - 1)))))
+				updatedMu := mu.UpdateStatus(UNLOCKED).UpdateRLocks(L.Elements().FlatInt(rls - 1))
+				OUTCOME = OUTCOME.MonoJoin(SUCCEED(val.UpdateRWMutex(updatedMu)))
 			}
 		}
 	}
 	if mu.Status().Geq(LOCKED) {
-		// If the mutex may be write locked, then the assumption is that no read
-		// locks were present at that point, meaning that read unlocking will throw
-		// a fatal exception.
+		// If the mutex may be write locked, then the assumption is that no read locks
+		// were present at that point, leading read-unlocking to throw a fatal exception.
 		OUTCOME = OUTCOME.MonoJoin(PANIC(val))
 	}
 

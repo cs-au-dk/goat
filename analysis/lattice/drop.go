@@ -1,9 +1,19 @@
 package lattice
 
+// Dropped is a lattice that was obtained by applying the Drop combinator, 𝓓, to another lattice.
+type Dropped struct {
+	Lattice
+	// An index above 0 signifies a multi-dropped lattice
+	index int
+	top   *DroppedTop
+}
+
+// Drop is a lattice combinator, 𝓓, for dropping any lattice L by introducing
+// an additional ⊤ element such that x ⊑ ⊤, ∀ x ∈ 𝓓(L).
 func Drop(lat Lattice) *Dropped {
 	var getIndex func(Lattice) int
-	// For a multi-dropped/lifted lattice, dig for the index of the
-	// surface-most drop.
+	// For a multi-dropped/lifted lattice, retrieve the outermost (greatest) synthetic ⊤.
+	// Construct the new synthetic ⊤ as larger than that one.
 	getIndex = func(lat Lattice) int {
 		switch lat := lat.(type) {
 		case *Lifted:
@@ -21,25 +31,22 @@ func Drop(lat Lattice) *Dropped {
 	return dropped
 }
 
-type Dropped struct {
-	Lattice
-	// An index above 0 signifies a multi-dropped lattice
-	index int
-	top   *DroppedTop
-}
-
+// Lifted accesses any lifted lattice underneath the dropped lattice.
 func (l *Dropped) Lifted() *Lifted {
 	return l.Lattice.Lifted()
 }
 
+// Preheight retrieves the pre-height of the underlying lattice.
 func (l *Dropped) Preheight() int {
 	return l.Lattice.Preheight()
 }
 
+// Dropped is the identity function for the dropped lattice.
 func (l *Dropped) Dropped() *Dropped {
 	return l
 }
 
+// TwoElement converts the underlying lattice to the two-element lattice.
 func (l *Dropped) TwoElement() *TwoElementLattice {
 	return l.Lattice.TwoElement()
 }
@@ -68,6 +75,7 @@ func (l *Dropped) Product() *ProductLattice {
 	return l.Lattice.Product()
 }
 
+// Top returns the synthetic ⊤ of the dropped lattice.
 func (l *Dropped) Top() Element {
 	if l.top == nil {
 		l.top = new(DroppedTop)

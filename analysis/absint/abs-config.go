@@ -11,129 +11,84 @@ import (
 	L "github.com/cs-au-dk/goat/analysis/lattice"
 	loc "github.com/cs-au-dk/goat/analysis/location"
 	T "github.com/cs-au-dk/goat/analysis/transition"
+	"github.com/cs-au-dk/goat/utils/slices"
 
 	"golang.org/x/tools/go/ssa"
 )
 
-// An abstract thread involves a CFG node and a root function indicating
-// the function that was called when spawning the goroutine. Upon exiting
-// the root function, a possible successor would be the termination of the
-// goroutine. Together, they form an abstract control location.
-type AbsCtrlLoc struct {
-	cfg.Node
-	Root *ssa.Function
-}
-
-// An abstract configuration involves a super location, (optionally)
-// bookkeeping of the targeted thread, and other path conditions, e. g.
-// channel status in terms of closing.
+// AbsConfiguration is a node in the superlocation graph. It connects
+// a superlocation to its successor and predecessor relations,
 type AbsConfiguration struct {
-	BaseConfiguration
+	defs.Superloc
+
+	Successors   map[uint32]Successor
 	predecessors map[uint32]*AbsConfiguration
-	superloc     defs.Superloc
-	Target       defs.Goro
-	level        ABSTRACTION_LEVEL
-	panicked     *bool // cached result of IsPanicked
+
+	// panicked caches the result of the "IsPanicked" check
+	panicked *bool
 }
 
-func (s *AbsConfiguration) Init(abs ABSTRACTION_LEVEL) Configuration {
-	s.superloc = defs.Create().Superloc(make(map[defs.Goro]defs.CtrLoc))
+// Init initializes all the components of the abstract configuration e.g.,
+// the predecessor and successor maps.
+func (s *AbsConfiguration) Init() *AbsConfiguration {
+	s.Superloc = defs.Create().Superloc(make(map[defs.Goro]defs.CtrLoc))
 	s.predecessors = make(map[uint32]*AbsConfiguration)
 	s.Successors = make(map[uint32]Successor)
-	if abs == ABS_CONCRETE {
-		log.Fatal("Defined abstract configuration at concrete abstraction level.")
-	}
-	s.level = abs
 	return s
 }
 
-func (s *AbsConfiguration) AbstractionLevel() ABSTRACTION_LEVEL {
-	return s.level
-}
-
-func (s *AbsConfiguration) Main() defs.Goro {
-	return s.superloc.Main()
-}
-
-// Create deep copy of configurations
+// Copy creates a deep copy of a configuration, excluding
+// relation information i.e., successors and predecessors.
 func (s *AbsConfiguration) Copy() *AbsConfiguration {
-	copy := Create().AbsConfiguration(s.level)
-	copy.Target = s.Target
+	copy := Create().AbsConfiguration()
 
-	copy.superloc = s.superloc
+	copy.Superloc = s.Superloc
 	return copy
 }
 
-func (s *AbsConfiguration) Hash() uint32 {
-	return s.superloc.Hash()
+// AddSuccessor adds a successor to the set of successors.
+// Successors are de-duplicated by comparing with the the underlying superlocation,
+// and the transition type.
+func (s *AbsConfiguration) AddSuccessor(succ Successor) {
+	s.Successors[succ.Hash()] = succ
 }
 
-func (s *AbsConfiguration) ForEach(do func(defs.Goro, defs.CtrLoc)) {
-	s.superloc.ForEach(do)
-}
-
-func (s *AbsConfiguration) String() string {
-	return s.superloc.String()
-}
-
-func (s *AbsConfiguration) Threads() defs.Superloc {
-	return s.superloc
-}
-
-func (s *AbsConfiguration) Get(g defs.Goro) (defs.CtrLoc, bool) {
-	return s.superloc.Get(g)
-}
-
-func (s *AbsConfiguration) GetUnsafe(g defs.Goro) defs.CtrLoc {
-	return s.superloc.GetUnsafe(g)
-}
-
+// AddPredecessor adds a successor to the set of successors.
+// Predecessors are de-duplicated by comparing with the the underlying superlocation,
+// and the transition type.
 func (s *AbsConfiguration) AddPredecessor(s1 *AbsConfiguration) {
 	s.predecessors[s1.Hash()] = s1
 }
 
-// Statefully set the threads in the given configuration.
-// Usage recommended only on expendable deep copies of configurations.
-func (s *AbsConfiguration) SetThreads(threads defs.Superloc) {
-	s.superloc = threads
-}
-
-// Derive new superlocation for given configuration.
+// Derive updates the configuration with a new superlocation derived from the given
+// map of threads.
 func (s *AbsConfiguration) Derive(threads map[defs.Goro]defs.CtrLoc) *AbsConfiguration {
-	s.superloc = s.superloc.Derive(threads)
+	s.Superloc = s.Superloc.Derive(threads)
 	return s
 }
 
+// DeriveThread updates the configuration with a new superlocation where the given thread
+// `tid` has been bound to the giben control location, `cl`.
 func (s *AbsConfiguration) DeriveThread(tid defs.Goro, cl defs.CtrLoc) *AbsConfiguration {
-	s.superloc = s.superloc.DeriveThread(tid, cl)
+	s.Superloc = s.Superloc.DeriveThread(tid, cl)
 	return s
 }
 
-func (s *AbsConfiguration) Superlocation() defs.Superloc {
-	return s.superloc
-}
-
-// Coarse configuration cannot be abstracted further.
-// Acts as the identity function if given the coarse abstraction level.
-func (s *AbsConfiguration) Abstract(abstractTo ABSTRACTION_LEVEL) Configuration {
-	if abstractTo < ABS_COARSE {
-		log.Fatal("Invalid abstraction: attempted abstraction from level ", ABS_COARSE, " to ", abstractTo)
-	}
-	return s
-}
-
+// PrettyPrint pretty prints the abstract configuration.
 func (s *AbsConfiguration) PrettyPrint() {
-	fmt.Println(s.superloc.String())
+	fmt.Println(s.String())
 }
 
-func (s *AbsConfiguration) IsSynchronizing(C AnalysisCtxt, state L.AnalysisState) bool {
+// IsCommunicating is true if no silent threads exist in the underlying superlocation
+// of the abstract configuration.
+func (s *AbsConfiguration) IsCommunicating(C AnalysisCtxt, state L.AnalysisState) bool {
 	return s.nextSilentProgress(C, state) == nil
 }
 
-// Returns true iff. the configuration contains a panicked goroutine
+// IsPanicked returns true iff. the configuration contains a panicked goroutine.
 func (s *AbsConfiguration) IsPanicked() bool {
 	if s.panicked == nil {
-		_, _, found := s.Superlocation().Find(func(_ defs.Goro, cl defs.CtrLoc) bool {
+		_, _, found := s.Find(func(_ defs.Goro, cl defs.CtrLoc) bool {
 			return cl.Panicked()
 		})
 		s.panicked = &found
@@ -141,23 +96,26 @@ func (s *AbsConfiguration) IsPanicked() bool {
 	return *s.panicked
 }
 
-// Returns whether the control location is a communication operation
-// on a concurrency primitive that is focused (wrt. C).
+// isAtRelevantCommunicationNode returns whether the control location is a
+// communication operation on a concurrency primitive that is focused (wrt. C).
 func (s *AbsConfiguration) isAtRelevantCommunicationNode(
 	C AnalysisCtxt, mem L.Memory,
 	g defs.Goro, cl defs.CtrLoc,
 ) bool {
 	node := cl.Node()
 	if !node.IsCommunicationNode() {
+		// Non-communication nodes are automatically not relevant.
 		return false
 	} else if _, isTerminated := node.(*cfg.TerminateGoro); isTerminated ||
 		C.FocusedPrimitives == nil {
+		// Goroutine termination nodes are not relevant.
 		return true
 	}
 
+	// For every communication operand at the node, check for wildcards
 	for _, param := range cfg.CommunicationPrimitivesOf(node) {
-		av, _ := C.swapWildcard(g, mem, param)
-		nonNilLocs := av.PointerValue().NonNilEntries()
+		av, mem := C.swapWildcard(s.Superloc, g, mem, param)
+		nonNilLocs := av.PointerValue().FilterNil().Entries()
 
 		if _, isChan := param.Type().Underlying().(*types.Chan); isChan && len(nonNilLocs) == 0 {
 			if !av.PointerValue().Contains(loc.NilLocation{}) {
@@ -172,38 +130,19 @@ func (s *AbsConfiguration) isAtRelevantCommunicationNode(
 			return true
 		}
 
-		for _, l := range nonNilLocs {
-			// Dig out the allocation site location in case of field pointers
-			for {
-				switch lt := l.(type) {
-				case loc.GlobalLocation:
-				case loc.AllocationSiteLocation:
-				case loc.FieldLocation:
-					l = lt.Base
-					continue
-				default:
-					log.Fatalf("%v %T", lt, lt)
-					panic("???")
-				}
-
-				break
-			}
-
-			if site, ok := l.GetSite(); ok && C.IsPrimitiveFocused(site) {
-				return true
-			} else if !ok {
-				log.Fatalf("%v has no site?", l)
-			}
+		if _, anyFocused := slices.Find(nonNilLocs, func(l loc.Location) bool {
+			return C.IsLocationFocused(l, mem)
+		}); anyFocused {
+			return true
 		}
 	}
 
 	return false
 }
 
-// Finds a thread that is not at a communication node and returns it.
-// Returns nil if there is no such thread.
-// Prefers ancestors over children and siblings are ordered by index.
-// Other relations are ordered by hash values.
+// nextSilentProgress finds a thread that is not at a communication node and
+// returns it, or nil if there no such thread is found. Prefers ancestors over
+// children and siblings are ordered by index. Other relations are ordered by hash values.
 func (s *AbsConfiguration) nextSilentProgress(C AnalysisCtxt, state L.AnalysisState) (ret defs.Goro) {
 	s.ForEach(func(g defs.Goro, cl defs.CtrLoc) {
 		// Discard communication nodes and panicked control locations.
@@ -226,19 +165,13 @@ func (s *AbsConfiguration) nextSilentProgress(C AnalysisCtxt, state L.AnalysisSt
 	})
 	return ret
 }
-
-type getSuccResult = struct {
-	Successor
-	State L.AnalysisState
-}
-
 func (s *AbsConfiguration) GetTransitions(
 	C AnalysisCtxt,
 	initState L.AnalysisState) transfers {
 
 	// Determine whether any thread should be progressed silently.
 	if progressSilently := s.nextSilentProgress(C, initState); progressSilently != nil {
-		C.Log.Superloc = s.superloc
+		C.Log.Superloc = s.Superloc
 		return s.GetSilentSuccessors(C, progressSilently, initState)
 	}
 
@@ -259,7 +192,7 @@ func (s *AbsConfiguration) GetTransitions(
 		switch n := cl.Node().(type) {
 		case *cfg.Select:
 			for _, op := range n.Ops() {
-				ls, mem := C.computeCommunicationLeaves(g, mops.Memory(), cl.Derive(op))
+				ls, mem := C.getCommunicationLeaves(s.Superloc, g, mops.Memory(), cl.Derive(op))
 				if mem.Lattice() == nil {
 					fmt.Println(ls)
 				}
@@ -269,7 +202,7 @@ func (s *AbsConfiguration) GetTransitions(
 				}
 			}
 		default:
-			ls, mem := C.computeCommunicationLeaves(g, mops.Memory(), cl)
+			ls, mem := C.getCommunicationLeaves(s.Superloc, g, mops.Memory(), cl)
 			mops = L.MemOps(mem)
 			for w := range ls {
 				updateLeavesComm(w, g)
@@ -279,7 +212,7 @@ func (s *AbsConfiguration) GetTransitions(
 
 	// Check whether the root thread has progressed to termination.
 	// If so, cut off abstract interpretation here.
-	// if _, ok := s.superloc.GetUnsafe(s.superloc.Main()).Node().(*cfg.TerminateGoro); ok {
+	// if _, ok := s.Superloc.GetUnsafe(s.Superloc.Main()).Node().(*cfg.TerminateGoro); ok {
 	// 	return nil
 	// }
 
@@ -287,26 +220,27 @@ func (s *AbsConfiguration) GetTransitions(
 		log.Fatal("Memory is nil?", mops)
 	}
 	// Find communication partners and other transitions
-	return s.GetCommSuccessors(leaves, initState.UpdateMemory(mops.Memory()))
+	return s.GetCommSuccessors(C, leaves, initState.UpdateMemory(mops.Memory()))
 }
 
-// Returns possible multi-step silent successors for the given thread.
-// Uses the abstract interpretation framework to model the effects of single steps on the way.
-// (This method contains an internal fixpoint computation.)
-func (s *AbsConfiguration) GetSilentSuccessors(
+func (s *AbsConfiguration) IntraprocessualFixpoint(
 	C AnalysisCtxt,
 	g defs.Goro,
 	initState L.AnalysisState,
-) transfers {
+) (
+	analysis map[defs.CtrLoc]L.AnalysisState,
+	graph map[defs.CtrLoc][]defs.CtrLoc,
+	steps int,
+) {
 	// Intra-processual analysis worklist.
-	cl0 := s.Threads().GetUnsafe(g)
-	analysis := map[defs.CtrLoc]L.AnalysisState{cl0: initState}
+	cl0 := s.GetUnsafe(g)
+	analysis = map[defs.CtrLoc]L.AnalysisState{cl0: initState}
 
 	if cl0.Panicked() {
 		panic("Abstract interpretation of panicked control locations is disabled")
 	}
 
-	graph := map[defs.CtrLoc][]defs.CtrLoc{}
+	graph = map[defs.CtrLoc][]defs.CtrLoc{}
 	// NOTE: You can visualize this graph with `VisualizeIntraprocess(g, graph, analysis)`
 	/* defer func() {
 		if err := recover(); err != nil || (C.Metrics.Enabled() && C.Metrics.Outcome == OUTCOME_PANIC) {
@@ -333,7 +267,7 @@ func (s *AbsConfiguration) GetSilentSuccessors(
 		return true
 		/*
 			// The next available index for a goroutine spawn.
-			index := s.Superlocation().NextIndex(
+			index := s.NextIndex(
 				// Prevent cyclical spawns in goroutines.
 				g.Spawn(cl).GetRadix())
 			// Only stop at spawn if we will actually spawn a goroutine
@@ -341,8 +275,6 @@ func (s *AbsConfiguration) GetSilentSuccessors(
 		*/
 	}
 
-	start := time.Now()
-	steps := 0
 	checkSkippedInterval := 100_000
 
 	W := defs.EmptyIntraprocessWorklist(C.LoadRes.CtrLocPriorities)
@@ -351,7 +283,7 @@ FIXPOINT:
 	for ; !W.IsEmpty(); steps++ {
 		if C.Metrics.Enabled() && steps%checkSkippedInterval == 0 && steps > 0 {
 			select {
-			case <-C.Metrics.skipped:
+			case <-C.skipped:
 				break FIXPOINT
 			default:
 			}
@@ -398,6 +330,22 @@ FIXPOINT:
 		graph[cl] = edges
 	}
 
+	return
+}
+
+// Returns possible multi-step silent successors for the given thread.
+// Uses the abstract interpretation framework to model the effects of single steps on the way.
+// (This method contains an internal fixpoint computation.)
+func (s *AbsConfiguration) GetSilentSuccessors(
+	C AnalysisCtxt,
+	g defs.Goro,
+	initState L.AnalysisState,
+) transfers {
+	cl0 := s.GetUnsafe(g)
+	start := time.Now()
+	analysis, graph, steps := s.IntraprocessualFixpoint(C, g, initState)
+	_ = graph
+
 	duration := time.Since(start)
 	reanalysisFactor := float64(steps) / float64(len(analysis))
 	if duration >= 2*time.Second && reanalysisFactor >= 20. {
@@ -439,9 +387,8 @@ FIXPOINT:
 		case len(n.Spawns()) > 0:
 			radix := g.Spawn(cl).GetRadix()
 			// The next available index for a goroutine spawn.
-			index := s.Superlocation().NextIndex(
-				// Prevent cyclical spawns in goroutines.
-				radix)
+			// Prevent cyclical spawns in goroutines.
+			index := s.NextIndex(radix)
 
 			// If the next index is less than the goroutine bound,
 			// add a goroutine with that index. If the goroutine bound was exceeded,
@@ -452,10 +399,11 @@ FIXPOINT:
 			}
 
 			spawnee := radix.SetIndex(index)
-			C.CheckMaxSuperloc(s.superloc, spawnee)
+			C.CheckMaxSuperloc(s.Superloc, spawnee)
 			callIns := n.(*cfg.SSANode).Instruction().(*ssa.Go)
 
 			paramTransfers, mayPanic := C.transferParams(
+				s.Superloc,
 				callIns.Call,
 				g, spawnee, state.Memory(),
 			)
@@ -478,21 +426,21 @@ FIXPOINT:
 						if _, ok := arg.(*ssa.Const); !ok {
 							newMem = newMem.Update(
 								loc.LocationFromSSAValue(spawnee, arg),
-								evaluateSSA(g, state.Memory(), arg),
+								EvaluateSSA(g, state.Memory(), arg),
 							)
 						}
 					}
 
 					if g.Length() >= spawnee.Length() {
 						if !opts.NoAbort() {
-							C.Metrics.Panic(fmt.Errorf("%w: recursion leads to %v", ErrUnboundedGoroutineSpawn, g.Spawn(cl)))
+							C.Panic(fmt.Errorf("%w: recursion leads to %v", ErrUnboundedGoroutineSpawn, g.Spawn(cl)))
 						}
 						blacklists[nil] = struct{}{}
 						continue
 					}
 					if !opts.WithinGoroBound(index) {
 						if !opts.NoAbort() {
-							C.Metrics.Panic(
+							C.Panic(
 								fmt.Errorf(
 									"%w: control flow cycle to %v (%s)",
 									ErrUnboundedGoroutineSpawn,
@@ -529,14 +477,14 @@ FIXPOINT:
 
 					if g.Length() >= spawnee.Length() {
 						if !opts.NoAbort() {
-							C.Metrics.Panic(fmt.Errorf("%w: recursion leads to %v", ErrUnboundedGoroutineSpawn, g.Spawn(cl)))
+							C.Panic(fmt.Errorf("%w: recursion leads to %v", ErrUnboundedGoroutineSpawn, g.Spawn(cl)))
 						}
 						blacklists[entry.Function()] = struct{}{}
 						continue
 					}
 					if !opts.WithinGoroBound(index) {
 						if !opts.NoAbort() {
-							C.Metrics.Panic(
+							C.Panic(
 								fmt.Errorf(
 									"%w: control flow cycle to %v (%s)",
 									ErrUnboundedGoroutineSpawn,

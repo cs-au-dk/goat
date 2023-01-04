@@ -10,6 +10,8 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
+// Sync is a transition resuting from the synchronization of two threads by operating
+// on a synchronous channel.
 type Sync struct {
 	Channel     loc.Location
 	Progressed1 defs.Goro
@@ -52,6 +54,7 @@ func (t Sync) String() (str string) {
 	return str + "<" + t.Channel.String() + ">"
 }
 
+// Close is a transition resulting from closing a channel.
 type Close struct {
 	transitionSingle
 	Op ssa.Value
@@ -74,6 +77,30 @@ func NewClose(progressed defs.Goro, chn ssa.Value) Close {
 	return Close{transitionSingle{progressed}, chn}
 }
 
+// Len is a transition resulting from reading the size of a channel's buffer.
+type Len struct {
+	transitionSingle
+	Op ssa.Value
+}
+
+func (t Len) PrettyPrint() {
+	fmt.Println("Read the buffer size of channel", t.Op, "on thread", t.progressed)
+}
+
+func (t Len) String() (str string) {
+	return t.progressed.String() + ": ■" + utils.SSAValString(t.Op) + ""
+}
+
+func (t Len) Hash() uint32 {
+	phasher := utils.PointerHasher[ssa.Value]{}
+	return utils.HashCombine(t.progressed.Hash(), phasher.Hash(t.Op))
+}
+
+func NewLen(progressed defs.Goro, chn ssa.Value) Len {
+	return Len{transitionSingle{progressed}, chn}
+}
+
+// Receive is a transition resuting from receiving from a buffered channel.
 type Receive struct {
 	transitionSingle
 	Chan loc.Location
@@ -95,6 +122,7 @@ func NewReceive(progressed defs.Goro, chn loc.Location) Receive {
 	return Receive{transitionSingle{progressed}, chn}
 }
 
+// Send is a transition resuting from sending to a buffered channel.
 type Send struct {
 	transitionSingle
 	Chan loc.Location

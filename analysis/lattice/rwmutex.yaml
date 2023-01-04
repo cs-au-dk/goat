@@ -1,0 +1,25 @@
+# RWMutex description.
+
+name: RWMutex
+description: is a member of the lattice of abstract read-write mutex values.
+informal: abstract read-write mutex
+lattice: lattice of read-write mutex values
+fields:
+  - accessor: Status
+    typename: FlatElement
+    typecast: Flat
+    stringname: Status
+    getcomment: |
+      retrieves the status of the write lock of the read-write mutex
+      which may be LOCKED or UNLOCKED when known.
+    setcomment: updates the status of the write lock of the read-write mutex as one of  ⊥, ⊤, LOCKED or UNLOCKED.
+  - accessor: RLocks
+    typename: FlatElement
+    typecast: Flat
+    stringname: RLocks
+    getcomment: |
+      retrieves the number of read locks acquired by the read-write mutex
+      as a member of the flat lattice of integers.
+    setcomment: |
+      updates the number of read locks acquired by the read-write mutex
+      to a member of the flat lattice of integers.
