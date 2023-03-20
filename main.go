@@ -61,7 +61,7 @@ func main() {
 		IncludeTests: opts.IncludeTests(),
 	}, path)
 	if err != nil {
-		log.Println("Failed pkgutil.LoadPackages")
+		log.Printf("Failed pkgutil.LoadPackages(GoPath=\"%s\", ModulePath=\"%s\", IncludeTests=%v)\n", opts.GoPath(), opts.ModulePath(), opts.IncludeTests())
 		log.Println(err)
 		os.Exit(1)
 	}
